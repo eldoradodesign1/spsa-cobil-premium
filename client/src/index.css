@@ -305,3 +305,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dashboard-hero::before { background-image: none; background: radial-gradient(circle at 79% 42%, rgba(135, 108, 255, 0.43), transparent 31%), radial-gradient(circle at 56% 88%, rgba(75, 111, 255, 0.22), transparent 34%); }
 :root[data-theme="dark"] .dashboard-hero::before { background-image: none; background: radial-gradient(circle at 79% 42%, rgba(129, 98, 255, 0.34), transparent 32%), radial-gradient(circle at 56% 88%, rgba(55, 92, 243, 0.2), transparent 34%); }
 .export-document__veil { background-image: none; background: radial-gradient(circle at 84% 8%, rgba(131, 108, 238, 0.2), transparent 28%), radial-gradient(circle at 8% 94%, rgba(78, 117, 235, 0.14), transparent 33%); }
+.brand-mark { filter: drop-shadow(0 6px 11px rgba(89, 76, 218, 0.3)); }
+.dashboard-hero__lens img { filter: saturate(1.08) drop-shadow(0 16px 28px rgba(89, 76, 218, 0.28)); }
