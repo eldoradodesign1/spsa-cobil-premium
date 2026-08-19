@@ -1,0 +1,25 @@
+- [x] Inspecter la configuration Vite et les journaux de connexion HMR.
+- [x] Configurer explicitement le client WebSocket pour l’URL de prévisualisation sécurisée.
+- [x] Redémarrer puis confirmer l’absence d’erreur WebSocket dans le navigateur.
+- [x] Définir les tokens bleu-violet Nebula pour les thèmes clair et sombre.
+- [x] Remplacer les lueurs et surfaces Aurora par des traitements Nebula cohérents.
+- [x] Valider les rendus desktop et mobile puis livrer la déclinaison.
+- [x] Cartographier les composants concernés par les interactions premium et les exports Nebula.
+- [x] Ajouter la transition cosmique, une lavalamp plus visible et des animations d’interface fluidifiées.
+- [x] Mettre en place les raccourcis clavier et leurs indices dans la sidebar.
+- [x] Ajouter des états de priorité violet, bleu et rose aux tableaux.
+- [x] Appliquer le branding Nebula et le logo aux exports PDF et XLSX.
+- [x] Tester les parcours clavier, les animations, les tableaux et les deux formats d’export.
+- [x] Cartographier les composants de vue, période, export, KPI et formulaires concernés.
+- [x] Synchroniser l’aperçu et les actions d’export avec la vue Direction ou Rapport hebdomadaire.
+- [x] Rendre la période active persistante dans les vues et dans la modale d’export.
+- [x] Ajouter la saisie Ctrl/⌘ + Entrée et le switcher équipement du formulaire Achats.
+- [x] Animer les valeurs KPI lors des changements de période et valider les nouveaux parcours.
+- [x] Identifier les règles de topbar et de sélecteur qui imposent actuellement l’affichage permanent.
+- [x] Recentrer le contrôle de période et restaurer sa visibilité conditionnelle sur la vue Direction.
+- [x] Vérifier le déclenchement au défilement et la présentation responsive.
+- [x] Auditer les entrées natives, les zones de défilement et la configuration PWA/GitHub existante.
+- [x] Créer les sélecteurs de date, nombres, listes et zones de défilement personnalisés.
+- [x] Désactiver le défilement vertical inutile sur mobile et tester les interactions tactiles.
+- [x] Finaliser la PWA et le workflow GitHub Pages, puis préparer le dépôt GitHub.
+- [x] Valider les contrôles, le build et la version de publication avant confirmation de mise en ligne.
