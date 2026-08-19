@@ -46,6 +46,10 @@ export type AppData = {
 };
 
 export type Filters = { from: string; to: string; responsible: string; site: string };
+export type ImportTarget = ModuleKey | "report" | "ignore";
+export type ImportPreviewRow = { index: number; values: RecordItem; selected: boolean };
+export type ImportSheetPreview = { id: string; sourceName: string; target: ImportTarget; selected: boolean; headers: string[]; rows: ImportPreviewRow[]; report?: WeeklyReport };
+export type ImportPreview = { fileName: string; sheets: ImportSheetPreview[] };
 
 export const MODULES: ModuleDefinition[] = [
   {
@@ -360,6 +364,58 @@ export async function importWorkbook(file: File): Promise<AppData> {
       decisions: cellValue(report.A35), ressources: cellValue(report.A43), commentaires: cellValue(report.A51),
     };
   }
+  data.updatedAt = new Date().toISOString();
+  return data;
+}
+
+function genericSheetRows(sheet: XLSX.WorkSheet | undefined) {
+  if (!sheet || !sheet["!ref"]) return { headers: [] as string[], rows: [] as RecordItem[] };
+  const range = XLSX.utils.decode_range(sheet["!ref"]);
+  const headerRow = Math.min(range.s.r + 1, range.e.r);
+  const headers = Array.from({ length: range.e.c - range.s.c + 1 }, (_, offset) => cellValue(sheet[XLSX.utils.encode_cell({ r: headerRow, c: range.s.c + offset })]) || `Colonne ${offset + 1}`);
+  const rows: RecordItem[] = [];
+  for (let row = headerRow + 1; row <= range.e.r; row += 1) {
+    const values: RecordItem = {}; let hasValue = false;
+    headers.forEach((header, offset) => { const value = cellValue(sheet[XLSX.utils.encode_cell({ r: row, c: range.s.c + offset })]); values[header] = value; if (value) hasValue = true; });
+    if (hasValue) rows.push(values);
+  }
+  return { headers, rows };
+}
+
+export async function previewWorkbook(file: File): Promise<ImportPreview> {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, cellStyles: true });
+  const moduleBySheet = new Map(MODULES.map((definition) => [definition.sheet, definition]));
+  const sheets = workbook.SheetNames.map((sourceName, sheetIndex) => {
+    const definition = moduleBySheet.get(sourceName);
+    if (definition) {
+      const rows = readRows(workbook.Sheets[sourceName], definition);
+      return { id: `${sheetIndex}-${sourceName}`, sourceName, target: definition.key as ImportTarget, selected: true, headers: definition.headers, rows: rows.map((values, index) => ({ index, values, selected: true })) };
+    }
+    if (sourceName === "Rapport hebdomadaire") {
+      const report = workbook.Sheets[sourceName];
+      return { id: `${sheetIndex}-${sourceName}`, sourceName, target: "report" as ImportTarget, selected: true, headers: ["Synthèse narrative"], rows: [], report: { startDate: toIsoDate(cellValue(report.B3)), endDate: toIsoDate(cellValue(report.D3)), realisations: cellValue(report.A10), vigilance: cellValue(report.A19), actions: cellValue(report.A27), decisions: cellValue(report.A35), ressources: cellValue(report.A43), commentaires: cellValue(report.A51) } };
+    }
+    const generic = genericSheetRows(workbook.Sheets[sourceName]);
+    return { id: `${sheetIndex}-${sourceName}`, sourceName, target: "ignore" as ImportTarget, selected: false, headers: generic.headers, rows: generic.rows.map((values, index) => ({ index, values, selected: false })) };
+  });
+  return { fileName: file.name, sheets };
+}
+
+function mapImportRow(row: RecordItem, sourceHeaders: string[], definition: ModuleDefinition) {
+  const mapped: RecordItem = {};
+  definition.headers.forEach((header, index) => { mapped[header] = row[header] ?? row[sourceHeaders[index]] ?? ""; });
+  return mapped;
+}
+
+export function importPreviewToData(preview: ImportPreview): AppData {
+  const data = emptyData(preview.fileName);
+  preview.sheets.forEach((sheet) => {
+    if (!sheet.selected || sheet.target === "ignore") return;
+    if (sheet.target === "report") { if (sheet.report) data.report = sheet.report; return; }
+    const target = sheet.target as ModuleKey;
+    const definition = MODULE_BY_KEY[target];
+    data.modules[target].push(...sheet.rows.filter((row) => row.selected).map((row) => mapImportRow(row.values, sheet.headers, definition)));
+  });
   data.updatedAt = new Date().toISOString();
   return data;
 }

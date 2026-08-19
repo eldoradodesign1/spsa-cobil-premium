@@ -2,7 +2,7 @@
 import ExcelJS from "exceljs";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import { AppData, Filters, MODULES, ModuleDefinition, getMetrics, formatDate, priorityTone } from "@/lib/business";
+import { AppData, Filters, MODULES, ModuleDefinition, getMetrics, formatDate, matchesFilters, priorityTone } from "@/lib/business";
 
 type ExportMetric = ReturnType<typeof getMetrics>;
 const ink = "FF27235C";
@@ -58,10 +58,10 @@ function buildDashboard(workbook: ExcelJS.Workbook, metrics: ExportMetric, filte
   return sheet;
 }
 
-function buildReport(workbook: ExcelJS.Workbook, data: AppData, metrics: ExportMetric) {
+function buildReport(workbook: ExcelJS.Workbook, data: AppData, metrics: ExportMetric, filters: Filters) {
   const sheet = workbook.addWorksheet("Rapport hebdomadaire", { views: [{ state: "frozen", ySplit: 3, showGridLines: false }] });
   sheet.columns = Array.from({ length: 8 }, () => ({ width: 18 })); mergeAndTitle(sheet, "SPSA-COBIL — RAPPORT HEBDOMADAIRE DU DÉPARTEMENT IT", 8);
-  sheet.getRow(3).values = ["Semaine du", dateOrBlank(data.report.startDate), "au", dateOrBlank(data.report.endDate)]; ["A3", "C3"].forEach((address) => { sheet.getCell(address).style = headerStyle; }); ["B3", "D3"].forEach((address) => { sheet.getCell(address).style = { ...textStyle, numFmt: "dd/mm/yyyy" }; });
+  sheet.getRow(3).values = ["Période active du", dateOrBlank(filters.from || data.report.startDate), "au", dateOrBlank(filters.to || data.report.endDate)]; ["A3", "C3"].forEach((address) => { sheet.getCell(address).style = headerStyle; }); ["B3", "D3"].forEach((address) => { sheet.getCell(address).style = { ...textStyle, numFmt: "dd/mm/yyyy" }; });
   sheet.getRow(5).values = ["Activités réalisées", "", "Activités en cours", "", "Actions en attente", "", "Incidents résolus", ""]; applyHeader(sheet.getRow(5)); sheet.getRow(6).values = [metrics.activitiesDone, "", metrics.activitiesInProgress, "", metrics.actionsWaiting, "", metrics.incidentsResolved, ""]; sheet.getRow(6).height = 38; sheet.getRow(6).eachCell((cell) => { cell.style = metricStyle; });
   const sections = [
     [8, "1. RÉALISATIONS MAJEURES", data.report.realisations], [11, "2. POINTS DE VIGILANCE", data.report.vigilance], [14, "3. ACTIONS À VENIR", data.report.actions],
@@ -96,7 +96,7 @@ function downloadWorkbook(buffer: ArrayBuffer) {
 
 export async function exportXlsx(data: AppData, filters: Filters) {
   const metrics = getMetrics(data, filters); const workbook = new ExcelJS.Workbook(); workbook.creator = "SPSA COBIL"; workbook.lastModifiedBy = "SPSA COBIL"; workbook.created = new Date(); workbook.modified = new Date();
-  buildDashboard(workbook, metrics, filters); buildReport(workbook, data, metrics); MODULES.forEach((definition) => buildModule(workbook, definition, data.modules[definition.key]));
+  buildDashboard(workbook, metrics, filters); buildReport(workbook, data, metrics, filters); MODULES.forEach((definition) => buildModule(workbook, definition, data.modules[definition.key].filter((record) => matchesFilters(record, filters))));
   const logo = await logoDataUri(); const imageId = logo ? workbook.addImage({ base64: logo, extension: "png" }) : null; workbook.worksheets.forEach((sheet) => attachNebulaLogo(sheet, imageId));
   const buffer = await workbook.xlsx.writeBuffer(); downloadWorkbook(buffer as ArrayBuffer);
 }

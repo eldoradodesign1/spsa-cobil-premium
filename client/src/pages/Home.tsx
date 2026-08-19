@@ -1,20 +1,20 @@
 /** SPSA COBIL — Nebula : cockpit de pilotage IT, verre cosmique et décisions contextualisées. */
-import { ChangeEvent, ComponentType, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, ComponentType, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, AlertTriangle, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight,
   CircleAlert, Download, FileDown, FileSpreadsheet, FileText, LayoutDashboard, ListFilter, Menu, MonitorCog,
   Moon, MoreHorizontal, Orbit, PanelLeftClose, PenLine, Plus, ReceiptText, RotateCcw, Search, Settings2,
-  KeyRound, LockKeyhole, ShieldCheck, Siren, Sparkles, Sun, Trash2, Unlock, Upload, X,
+  KeyRound, LockKeyhole, ShieldCheck, Siren, Sparkles, Sun, Table2, Trash2, Unlock, Upload, X,
 } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { DoubleRangeSlider } from "@/components/DoubleRangeSlider";
 import { ExportPreview } from "@/components/ExportPreview";
 import { NebulaDatePicker, NebulaNumberInput, NebulaSelect } from "@/components/NebulaFieldControls";
 import {
-  AppData, EMPTY_REPORT, FieldDefinition, Filters, MODULE_BY_KEY, MODULES, ModuleKey, RecordItem, REPORT_SECTIONS,
+  AppData, EMPTY_REPORT, FieldDefinition, Filters, ImportPreview, ImportSheetPreview, ImportTarget, MODULE_BY_KEY, MODULES, ModuleKey, RecordItem, REPORT_SECTIONS,
   emptyData, formatDate, formatMoney, getDateBounds, getMetrics, getRecordDate, getResponsible, getSite,
-  getWeeklyTrend, importWorkbook, matchesFilters, priorityTone, statusTone,
+  getWeeklyTrend, importPreviewToData, matchesFilters, previewWorkbook, priorityTone, statusTone,
 } from "@/lib/business";
 import { exportPdf, exportXlsx, reportDateLabel } from "@/lib/exports";
 import { EncryptedVault, clearVault, createVault, getVaultBootstrap, persistVault, removeLegacyData, unlockVault, updateVault } from "@/lib/secureStorage";
@@ -50,7 +50,7 @@ const brandIcon = `${import.meta.env.BASE_URL}icons/icon-512.png`;
 
 export default function Home() {
   const [bootstrap] = useState(() => getVaultBootstrap());
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<View>(() => new URLSearchParams(window.location.search).get("view") === "report" ? "report" : "dashboard");
   const [data, setData] = useState<AppData>(bootstrap.data);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [theme, setTheme] = useState<"light" | "dark">(() => (window.localStorage.getItem("spsa-cobil-theme") as "light" | "dark") || "dark");
@@ -66,6 +66,8 @@ export default function Home() {
   const [reportEditing, setReportEditing] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [importing, setImporting] = useState(false);
+  const [workbookPreview, setWorkbookPreview] = useState<ImportPreview | null>(null);
+  const [dropActive, setDropActive] = useState(false);
   const [themeTransition, setThemeTransition] = useState<"light" | "dark" | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [vault, setVault] = useState<EncryptedVault | null>(bootstrap.vault);
@@ -78,6 +80,7 @@ export default function Home() {
   const filterDockRef = useRef<HTMLElement>(null);
   const vaultKeyRef = useRef<CryptoKey | null>(null);
   const vaultRef = useRef<EncryptedVault | null>(bootstrap.vault);
+  const dragDepthRef = useRef(0);
   const bounds = useMemo(() => getDateBounds(data), [data]);
   const metrics = useMemo(() => getMetrics(data, filters), [data, filters]);
   const trend = useMemo(() => getWeeklyTrend(data, filters), [data, filters]);
@@ -115,14 +118,29 @@ export default function Home() {
   const notify = (message: string, kind: "success" | "info" | "error" = "success") => setToast({ message, kind });
   const navigate = (next: View) => { setView(next); if (next !== "dashboard" && next !== "report") setExportKind(null); setSidebarOpen(false); setShowSearch(false); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const resetFilters = () => { setFilters({ ...defaultFilters, from: bounds.min, to: bounds.max }); notify("Périmètre réinitialisé", "info"); };
-  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]; if (!file) return;
+  const prepareImport = async (file: File) => {
     if (!/\.xlsx?$/i.test(file.name)) { notify("Sélectionnez un fichier Excel (.xlsx ou .xls).", "error"); return; }
     setImporting(true);
-    try { const imported = await importWorkbook(file); setData(imported); setView("dashboard"); notify(`Classeur importé : ${file.name}`); }
+    try { const preview = await previewWorkbook(file); setWorkbookPreview(preview); }
     catch { notify("Le classeur n’a pas pu être interprété.", "error"); }
-    finally { setImporting(false); event.target.value = ""; }
+    finally { setImporting(false); }
   };
+  const handleImport = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; if (!file) return;
+    void prepareImport(file); event.target.value = "";
+  };
+  const updateImportSheet = (id: string, update: (sheet: ImportSheetPreview) => ImportSheetPreview) => setWorkbookPreview((current) => current ? { ...current, sheets: current.sheets.map((sheet) => sheet.id === id ? update(sheet) : sheet) } : current);
+  const confirmImport = () => {
+    if (!workbookPreview) return;
+    const selectedRows = workbookPreview.sheets.reduce((sum, sheet) => sum + (sheet.selected && sheet.target !== "ignore" ? sheet.rows.filter((row) => row.selected).length : 0), 0);
+    const selectedReport = workbookPreview.sheets.some((sheet) => sheet.selected && sheet.target === "report");
+    if (!selectedRows && !selectedReport) { notify("Sélectionnez au moins une table, une ligne ou le rapport à importer.", "error"); return; }
+    setData(importPreviewToData(workbookPreview)); setWorkbookPreview(null); setView("dashboard"); notify(`${selectedRows} ligne${selectedRows > 1 ? "s" : ""}${selectedReport ? " et le rapport" : ""} importée${selectedRows > 1 ? "s" : ""}`);
+  };
+  const onDragEnter = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); dragDepthRef.current += 1; setDropActive(true); };
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (!dragDepthRef.current) setDropActive(false); };
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => event.preventDefault();
+  const onDrop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); dragDepthRef.current = 0; setDropActive(false); const file = Array.from(event.dataTransfer.files).find((item) => /\.xlsx?$/i.test(item.name)); if (file) void prepareImport(file); else notify("Déposez un fichier Excel (.xlsx ou .xls).", "error"); };
   const saveRecord = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!recordDialog) return;
     const definition = MODULE_BY_KEY[recordDialog.module];
@@ -163,6 +181,7 @@ export default function Home() {
   const isTopbarPeriodVisible = view !== "dashboard" || periodDockOutOfView;
   const startExport = (kind: "dashboard" | "report" = activeExportKind) => setExportKind(kind);
   const downloadPdf = async () => { if (!previewRef.current || !exportKind) return; try { await exportPdf(previewRef.current, exportKind); notify("PDF préparé et téléchargé"); } catch { notify("La génération du PDF a rencontré un problème.", "error"); } };
+  const downloadXlsx = async () => { try { await exportXlsx(data, filters); notify("Classeur XLSX téléchargé pour la période active"); } catch { notify("La génération du classeur a rencontré un problème.", "error"); } };
   const switchTheme = (next: "light" | "dark") => {
     if (next === theme) return;
     setThemeTransition(next);
@@ -199,10 +218,13 @@ export default function Home() {
       if (event.key === "Escape") {
         if (showSearch) { event.preventDefault(); setShowSearch(false); return; }
         if (exportKind) { event.preventDefault(); setExportKind(null); return; }
+        if (workbookPreview) { event.preventDefault(); setWorkbookPreview(null); return; }
         if (recordDialog) { event.preventDefault(); setRecordDialog(null); return; }
         if (sidebarOpen) { event.preventDefault(); setSidebarOpen(false); }
         return;
       }
+      if (exportKind && event.key.toLowerCase() === "x") { event.preventDefault(); void downloadXlsx(); return; }
+      if (exportKind && event.key.toLowerCase() === "p") { event.preventDefault(); void downloadPdf(); return; }
       if (isEditing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "/") { event.preventDefault(); setShowSearch(true); return; }
       if (event.key.toLowerCase() === "t") { event.preventDefault(); toggleTheme(); return; }
@@ -213,9 +235,9 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [exportKind, recordDialog, showSearch, sidebarOpen, theme, view]);
+  }, [exportKind, recordDialog, showSearch, sidebarOpen, theme, view, data, filters, workbookPreview]);
 
-  return <div className={`app-shell ${collapsed ? "app-shell--collapsed" : ""} ${sidebarOpen ? "app-shell--menu-open" : ""}`}>
+  return <div className={`app-shell ${collapsed ? "app-shell--collapsed" : ""} ${sidebarOpen ? "app-shell--menu-open" : ""}`} onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}>
     <div className="lavalamp" aria-hidden="true"><span className="lava-blob lava-blob--one" /><span className="lava-blob lava-blob--two" /><span className="lava-blob lava-blob--three" /><span className="lava-blob lava-blob--four" /></div>
     <AnimatePresence>{themeTransition && <motion.div aria-hidden="true" className={`theme-cosmos-transition theme-cosmos-transition--${themeTransition}`} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.08 }} transition={{ duration: 0.56, ease: [0.23, 1, 0.32, 1] }} />}</AnimatePresence>
     <aside className="sidebar"><div className="sidebar__brand"><AppLogo compact={collapsed} /><button className="icon-button sidebar__collapse" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? "Déployer la navigation" : "Réduire la navigation"}>{collapsed ? <ChevronRight size={17} /> : <PanelLeftClose size={17} />}</button></div>
@@ -238,10 +260,12 @@ export default function Home() {
       </div>
     </main>
     <input ref={inputRef} type="file" accept=".xlsx,.xls" onChange={handleImport} hidden />
-    {importing && <div className="import-curtain"><div><Sparkles size={20} /><b>Lecture du classeur</b><span>Les feuilles et champs sont en cours d’interprétation.</span></div></div>}
+    {dropActive && !workbookPreview && <div className="global-dropzone" aria-live="polite"><div><Upload size={28} /><b>Déposez le classeur à importer</b><span>Analyse des feuilles, tables et lignes avant intégration.</span></div></div>}
+    {importing && <div className="import-curtain"><div><Sparkles size={20} /><b>Analyse du classeur</b><span>Les feuilles, en-têtes et lignes sont en cours de lecture.</span></div></div>}
     <AnimatePresence>{toast && <motion.div className={`toast toast--${toast.kind}`} initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }}><Check size={16} /><span>{toast.message}</span></motion.div>}</AnimatePresence>
     <AnimatePresence>{showSearch && <SearchOverlay query={query} setQuery={setQuery} results={searchResults} onClose={() => setShowSearch(false)} onOpen={(module) => navigate(module)} />}</AnimatePresence>
-    <AnimatePresence>{exportKind && <ExportDialog kind={exportKind} data={data} filters={filters} bounds={bounds} previewRef={previewRef} onClose={() => setExportKind(null)} onKindChange={(kind) => { setExportKind(kind); navigate(kind); }} onFilterChange={setFilters} onPdf={downloadPdf} onXlsx={() => { void exportXlsx(data, filters).then(() => notify("Classeur XLSX téléchargé")).catch(() => notify("La génération du classeur a rencontré un problème.", "error")); }} />}</AnimatePresence>
+    <AnimatePresence>{exportKind && <ExportDialog kind={exportKind} data={data} filters={filters} bounds={bounds} previewRef={previewRef} onClose={() => setExportKind(null)} onKindChange={(kind) => { setExportKind(kind); navigate(kind); }} onFilterChange={setFilters} onPdf={downloadPdf} onXlsx={() => { void downloadXlsx(); }} />}</AnimatePresence>
+    <AnimatePresence>{workbookPreview && <ImportReviewDialog preview={workbookPreview} onClose={() => setWorkbookPreview(null)} onChooseFile={() => inputRef.current?.click()} onUpdateSheet={updateImportSheet} onConfirm={confirmImport} />}</AnimatePresence>
     <AnimatePresence>{recordDialog && <RecordEditor dialog={recordDialog} onClose={() => setRecordDialog(null)} onChange={(values) => setRecordDialog((current) => current ? { ...current, values } : current)} onSubmit={saveRecord} />}</AnimatePresence>
     <AnimatePresence>{vaultDialog && <VaultDialog mode={vaultDialog} busy={vaultBusy} error={vaultError} onSetup={setupVault} onUnlock={unlockLocalVault} onClose={() => { if (vaultDialog === "setup") setVaultDialog(null); }} />}</AnimatePresence>
   </div>;
@@ -297,7 +321,16 @@ function EmptyState({ title, text, action, onAction }: { title: string; text: st
 
 function SearchOverlay({ query, setQuery, results, onClose, onOpen }: { query: string; setQuery: (value: string) => void; results: { module: typeof MODULES[number]; record: RecordItem; index: number }[]; onClose: () => void; onOpen: (module: ModuleKey) => void }) { return <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}><motion.section className="search-dialog" initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }}><div className="search-dialog__input"><Search size={20} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une activité, un incident, un projet…" /><button onClick={onClose}><X size={18} /></button></div><div className="search-dialog__results">{query ? results.length ? results.map(({ module, record, index }) => <button key={`${module.key}-${index}`} onClick={() => onOpen(module.key)}><span>{module.label}</span><b>{record[module.primaryField] || "Ligne correspondante"}</b><small>{record.Statut || record.Priorité || record.Date || "Ouvrir le registre"}</small><ChevronRight size={16} /></button>) : <p>Aucun résultat correspondant.</p> : <p>Saisissez au moins deux caractères pour explorer tous les registres.</p>}</div></motion.section></motion.div>; }
 
-function ExportDialog({ kind, data, filters, bounds, previewRef, onClose, onKindChange, onFilterChange, onPdf, onXlsx }: { kind: "dashboard" | "report"; data: AppData; filters: Filters; bounds: ReturnType<typeof getDateBounds>; previewRef: React.RefObject<HTMLElement | null>; onClose: () => void; onKindChange: (kind: "dashboard" | "report") => void; onFilterChange: (filters: Filters) => void; onPdf: () => void; onXlsx: () => void }) { return <motion.div className="modal-backdrop export-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}><motion.section className="export-dialog" initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12, scale: 0.98 }}><header><div><p className="eyebrow"><FileDown size={14} /> Centre d’export</p><h2>Prévisualiser avant de diffuser.</h2><p>Le document conserve le contexte de période et adopte la charte du cockpit.</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="export-dialog__controls"><div className="export-kind-switch" role="tablist" aria-label="Vue à exporter"><button role="tab" aria-selected={kind === "dashboard"} className={kind === "dashboard" ? "is-selected" : ""} onClick={() => onKindChange("dashboard")}>Vue direction</button><button role="tab" aria-selected={kind === "report"} className={kind === "report" ? "is-selected" : ""} onClick={() => onKindChange("report")}>Rapport hebdo</button></div><div className="export-dialog__period"><span><CalendarDays size={13} />Période active</span><DoubleRangeSlider min={bounds.min} max={bounds.max} ticks={bounds.ticks} from={filters.from} to={filters.to} compact onChange={(from, to) => onFilterChange({ ...filters, from, to })} /></div></div><div className="export-dialog__preview"><ExportPreview ref={previewRef} kind={kind} data={data} filters={filters} /></div><footer><button className="soft-button" onClick={onClose}>Annuler</button><button className="soft-button" onClick={onXlsx}><FileSpreadsheet size={16} />Classeur XLSX</button><button className="primary-button" onClick={onPdf}><Download size={16} />Télécharger le PDF</button></footer></motion.section></motion.div>; }
+function ExportDialog({ kind, data, filters, bounds, previewRef, onClose, onKindChange, onFilterChange, onPdf, onXlsx }: { kind: "dashboard" | "report"; data: AppData; filters: Filters; bounds: ReturnType<typeof getDateBounds>; previewRef: React.RefObject<HTMLElement | null>; onClose: () => void; onKindChange: (kind: "dashboard" | "report") => void; onFilterChange: (filters: Filters) => void; onPdf: () => void; onXlsx: () => void }) { return <motion.div className="modal-backdrop export-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}><motion.section className="export-dialog" initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12, scale: 0.98 }}><header><div><p className="eyebrow"><FileDown size={14} /> Centre d’export</p><h2>Prévisualiser avant de diffuser.</h2><p>Le document et les données téléchargées sont limités à la période active.</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="export-dialog__controls"><div className="export-kind-switch" role="tablist" aria-label="Vue à exporter"><button role="tab" aria-selected={kind === "dashboard"} className={kind === "dashboard" ? "is-selected" : ""} onClick={() => onKindChange("dashboard")}>Vue direction</button><button role="tab" aria-selected={kind === "report"} className={kind === "report" ? "is-selected" : ""} onClick={() => onKindChange("report")}>Rapport hebdo</button></div><div className="export-dialog__period"><span><CalendarDays size={13} />Période active</span><DoubleRangeSlider min={bounds.min} max={bounds.max} ticks={bounds.ticks} from={filters.from} to={filters.to} compact onChange={(from, to) => onFilterChange({ ...filters, from, to })} /></div></div><div className="export-dialog__preview"><ExportPreview ref={previewRef} kind={kind} data={data} filters={filters} /></div><footer><button className="soft-button" onClick={onClose}>Annuler</button><button className="soft-button" onClick={onXlsx} title="Raccourci X"><FileSpreadsheet size={16} />Classeur XLSX <kbd>X</kbd></button><button className="primary-button" onClick={onPdf} title="Raccourci P"><Download size={16} />Télécharger le PDF <kbd>P</kbd></button></footer></motion.section></motion.div>; }
+
+const importTargetChoices: { target: ImportTarget; label: string }[] = [{ target: "ignore", label: "Écarter cette feuille" }, { target: "report", label: "Rapport hebdomadaire" }, ...MODULES.map((module) => ({ target: module.key as ImportTarget, label: module.label }))];
+const importTargetLabel = (target: ImportTarget) => importTargetChoices.find((choice) => choice.target === target)?.label || "Écarter cette feuille";
+
+function ImportReviewDialog({ preview, onClose, onChooseFile, onUpdateSheet, onConfirm }: { preview: ImportPreview; onClose: () => void; onChooseFile: () => void; onUpdateSheet: (id: string, update: (sheet: ImportSheetPreview) => ImportSheetPreview) => void; onConfirm: () => void }) {
+  const selectedRows = preview.sheets.reduce((total, sheet) => total + (sheet.selected && sheet.target !== "ignore" ? sheet.rows.filter((row) => row.selected).length : 0), 0);
+  const selectedSheets = preview.sheets.filter((sheet) => sheet.selected && sheet.target !== "ignore").length;
+  return <motion.div className="modal-backdrop import-review-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}><motion.section className="import-review-dialog" initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }}><header><div><p className="eyebrow"><Table2 size={14} /> Lecture sélective</p><h2>Choisir ce qui entre dans le cockpit.</h2><p><b>{preview.fileName}</b> · Activez, routez ou écartez chaque table avant d’importer.</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header><div className="import-review-summary"><span><b>{selectedSheets}</b> table{selectedSheets > 1 ? "s" : ""} retenue{selectedSheets > 1 ? "s" : ""}</span><span><b>{selectedRows}</b> ligne{selectedRows > 1 ? "s" : ""} retenue{selectedRows > 1 ? "s" : ""}</span><button className="text-button" onClick={onChooseFile}><Upload size={14} />Changer de fichier</button></div><div className="import-review-list">{preview.sheets.map((sheet) => { const enabledRows = sheet.rows.filter((row) => row.selected).length; const isReport = sheet.target === "report"; return <article className={`import-sheet ${sheet.selected && sheet.target !== "ignore" ? "is-selected" : ""}`} key={sheet.id}><div className="import-sheet__head"><button className="check-control" role="checkbox" aria-checked={sheet.selected && sheet.target !== "ignore"} onClick={() => onUpdateSheet(sheet.id, (current) => ({ ...current, selected: !current.selected, rows: current.rows.map((row) => ({ ...row, selected: !current.selected ? true : row.selected })) }))}><Check size={13} /></button><div><b>{sheet.sourceName}</b><span>{isReport ? "Synthèse narrative" : `${sheet.rows.length} ligne${sheet.rows.length > 1 ? "s" : ""} détectée${sheet.rows.length > 1 ? "s" : ""}`}</span></div><NebulaSelect value={importTargetLabel(sheet.target)} onChange={(label) => { const next = importTargetChoices.find((choice) => choice.label === label)?.target || "ignore"; onUpdateSheet(sheet.id, (current) => ({ ...current, target: next, selected: next === "ignore" ? false : true, rows: current.rows.map((row) => ({ ...row, selected: next === "ignore" ? false : row.selected })) })); }} options={importTargetChoices.map((choice) => choice.label)} emptyLabel="Écarter cette feuille" /></div>{!isReport && sheet.rows.length > 0 && <div className="import-sheet__table"><div className="import-row import-row--header"><span aria-hidden="true" /><small>#</small>{sheet.headers.slice(0, 3).map((header) => <b key={header}>{header}</b>)}</div>{sheet.rows.slice(0, 6).map((row) => <div className="import-row" key={row.index}><button className="check-control check-control--row" role="checkbox" aria-checked={row.selected} onClick={() => onUpdateSheet(sheet.id, (current) => ({ ...current, rows: current.rows.map((item) => item.index === row.index ? { ...item, selected: !item.selected } : item) }))}><Check size={11} /></button><small>{row.index + 1}</small>{sheet.headers.slice(0, 3).map((header) => <span key={header}>{row.values[header] || "—"}</span>)}</div>)}{sheet.rows.length > 6 && <p className="import-sheet__more">Les {sheet.rows.length - 6} autres lignes sont également sélectionnables à l’import.</p>}<div className="import-sheet__actions"><button className="text-button" onClick={() => onUpdateSheet(sheet.id, (current) => ({ ...current, rows: current.rows.map((row) => ({ ...row, selected: true })) }))}>Tout retenir</button><button className="text-button" onClick={() => onUpdateSheet(sheet.id, (current) => ({ ...current, rows: current.rows.map((row) => ({ ...row, selected: false })) }))}>Écarter les lignes</button><span>{enabledRows}/{sheet.rows.length} lignes</span></div></div>}</article>; })}</div><footer><button className="soft-button" onClick={onClose}>Annuler</button><button className="primary-button" onClick={onConfirm}><Upload size={16} />Importer la sélection <span>{selectedRows}</span></button></footer></motion.section></motion.div>;
+}
 
 function RecordEditor({ dialog, onClose, onChange, onSubmit }: { dialog: NonNullable<RecordDialog>; onClose: () => void; onChange: (value: RecordItem) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) { const module = MODULE_BY_KEY[dialog.module]; const createsEquipment = dialog.module === "achats" && dialog.values["Ajouter à l’inventaire"] === "Oui"; const fields = createsEquipment ? [...module.fields, ...purchaseEquipmentFields] : module.fields; return <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}><motion.form className="record-dialog" initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8, scale: 0.98 }} onSubmit={onSubmit} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); event.currentTarget.requestSubmit(); } }}><header><div><p className="eyebrow">{module.eyebrow}</p><h2>{dialog.index === null ? "Nouvelle entrée" : "Modifier l’entrée"}</h2></div><button className="icon-button" type="button" onClick={onClose}><X size={18} /></button></header>{dialog.module === "achats" && <div className={`equipment-switcher ${createsEquipment ? "is-active" : ""}`}><div><span>Équipement à inventorier</span><small>Crée automatiquement l’actif associé dans le registre Équipements.</small></div><button type="button" role="switch" aria-checked={createsEquipment} onClick={() => onChange({ ...dialog.values, "Ajouter à l’inventaire": createsEquipment ? "Non" : "Oui" })}><i /></button></div>}<div className="record-dialog__fields">{fields.map((field) => <label className={field.type === "textarea" ? "field field--wide" : "field"} key={field.key}><span>{field.label}{field.required && <b>*</b>}</span>{field.type === "textarea" ? <textarea value={dialog.values[field.key] || ""} onChange={(event) => onChange({ ...dialog.values, [field.key]: event.target.value })} placeholder={field.placeholder} /> : field.type === "select" ? <NebulaSelect value={dialog.values[field.key] || ""} onChange={(value) => onChange({ ...dialog.values, [field.key]: value })} options={field.options || []} emptyLabel="Sélectionner" /> : field.type === "date" ? <NebulaDatePicker value={dialog.values[field.key] || ""} onChange={(value) => onChange({ ...dialog.values, [field.key]: value })} placeholder={field.placeholder || `Choisir ${field.label.toLowerCase()}`} required={field.required} /> : field.type === "number" ? <NebulaNumberInput value={dialog.values[field.key] || ""} onChange={(value) => onChange({ ...dialog.values, [field.key]: value })} placeholder={field.placeholder || "0"} /> : <input type="text" value={dialog.values[field.key] || ""} onChange={(event) => onChange({ ...dialog.values, [field.key]: event.target.value })} placeholder={field.placeholder} />}</label>)}</div><footer><span className="form-shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>↵</kbd> Enregistrer</span><button type="button" className="soft-button" onClick={onClose}>Annuler</button><button type="submit" className="primary-button" title="Ctrl/⌘ + Entrée"><Check size={16} />Enregistrer</button></footer></motion.form></motion.div>; }
 

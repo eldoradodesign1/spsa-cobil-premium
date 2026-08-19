@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { emptyData, getDateBounds, getMetrics, getWeeklyTrend, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
+import { emptyData, getDateBounds, getMetrics, getWeeklyTrend, importPreviewToData, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
 import { createVault, unlockVault } from "@/lib/secureStorage";
 
 describe("logique métier SPSA COBIL", () => {
@@ -57,6 +57,16 @@ describe("logique métier SPSA COBIL", () => {
     expect(data.modules.suivi[0]["Activité / Demande"]).toBe("Connexion VPN");
     expect(data.report.startDate).toBe("2026-08-03");
     expect(data.report.realisations).toBe("Mise à jour du VPN");
+  });
+
+  it("importe uniquement les feuilles et lignes retenues dans la revue Excel", () => {
+    const data = importPreviewToData({ fileName: "sélection.xlsx", sheets: [
+      { id: "suivi", sourceName: "Suivi permanent", target: "suivi", selected: true, headers: ["ID", "Date", "Activité / Demande"], rows: [{ index: 0, selected: true, values: { ID: "1", Date: "2026-08-03", "Activité / Demande": "Accès VPN" } }, { index: 1, selected: false, values: { ID: "2", Date: "2026-08-04", "Activité / Demande": "Audit réseau" } }] },
+      { id: "ignore", sourceName: "Notes", target: "ignore", selected: false, headers: ["Note"], rows: [{ index: 0, selected: false, values: { Note: "Ne pas importer" } }] },
+    ] });
+    expect(data.modules.suivi).toHaveLength(1);
+    expect(data.modules.suivi[0]["Activité / Demande"]).toBe("Accès VPN");
+    expect(data.modules.projets).toHaveLength(0);
   });
 
   it("chiffre les données locales et impose la phrase secrète pour les restituer", async () => {
