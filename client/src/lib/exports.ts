@@ -11,7 +11,7 @@ const blue = "FF3E72E8";
 const rose = "FFE56A9F";
 const line = "FFD8D6F2";
 const white = "FFFFFFFF";
-const logoPath = "/manus-storage/spsa-cobil-mark_2a35566d.png";
+const logoPath = `${import.meta.env.BASE_URL}icons/icon-512.png`;
 
 const titleStyle: Partial<ExcelJS.Style> = { font: { name: "Aptos Display", size: 16, bold: true, color: { argb: white } }, fill: { type: "pattern", pattern: "solid", fgColor: { argb: ink } }, alignment: { vertical: "middle" } };
 const headerStyle: Partial<ExcelJS.Style> = { font: { name: "Aptos", size: 10, bold: true, color: { argb: white } }, fill: { type: "pattern", pattern: "solid", fgColor: { argb: violet } }, alignment: { vertical: "middle", wrapText: true }, border: { bottom: { style: "thin", color: { argb: "FF4A42B2" } } } };

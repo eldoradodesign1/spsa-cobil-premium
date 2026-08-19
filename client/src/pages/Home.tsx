@@ -5,7 +5,7 @@ import {
   Activity, AlertTriangle, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight,
   CircleAlert, Download, FileDown, FileSpreadsheet, FileText, LayoutDashboard, ListFilter, Menu, MonitorCog,
   Moon, MoreHorizontal, Orbit, PanelLeftClose, PenLine, Plus, ReceiptText, RotateCcw, Search, Settings2,
-  ShieldCheck, Siren, Sparkles, Sun, Trash2, Upload, X,
+  KeyRound, LockKeyhole, ShieldCheck, Siren, Sparkles, Sun, Trash2, Unlock, Upload, X,
 } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { DoubleRangeSlider } from "@/components/DoubleRangeSlider";
@@ -17,12 +17,14 @@ import {
   getWeeklyTrend, importWorkbook, matchesFilters, priorityTone, statusTone,
 } from "@/lib/business";
 import { exportPdf, exportXlsx, reportDateLabel } from "@/lib/exports";
+import { EncryptedVault, clearVault, createVault, getVaultBootstrap, persistVault, removeLegacyData, unlockVault, updateVault } from "@/lib/secureStorage";
 
 type View = "dashboard" | "report" | "settings" | ModuleKey;
 type ToastState = { message: string; kind: "success" | "info" | "error" } | null;
 type RecordDialog = { module: ModuleKey; index: number | null; values: RecordItem } | null;
 type Icon = ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }> };
+type VaultStatus = "unprotected" | "locked" | "secured";
 
 const moduleIcons: Record<ModuleKey, Icon> = { suivi: Activity, incidents: Siren, projets: Orbit, fournisseurs: Building2, equipements: MonitorCog, achats: ReceiptText };
 const menuGroups: { label: string; items: { id: View; label: string; icon: Icon; shortcut: string }[] }[] = [
@@ -44,14 +46,12 @@ const purchaseEquipmentFields: FieldDefinition[] = [
   { key: "Garantie", label: "Garantie", type: "text", placeholder: "Ex. Jusqu’au 31/12/2028" },
 ];
 const purchaseEquipmentKeys = ["Ajouter à l’inventaire", ...purchaseEquipmentFields.map((field) => field.key)];
-
-function getSavedData() {
-  try { const value = window.localStorage.getItem("spsa-cobil-data-v2"); return value ? JSON.parse(value) as AppData : emptyData(); } catch { return emptyData(); }
-}
+const brandIcon = `${import.meta.env.BASE_URL}icons/icon-512.png`;
 
 export default function Home() {
+  const [bootstrap] = useState(() => getVaultBootstrap());
   const [view, setView] = useState<View>("dashboard");
-  const [data, setData] = useState<AppData>(getSavedData);
+  const [data, setData] = useState<AppData>(bootstrap.data);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [theme, setTheme] = useState<"light" | "dark">(() => (window.localStorage.getItem("spsa-cobil-theme") as "light" | "dark") || "dark");
   const [query, setQuery] = useState("");
@@ -68,9 +68,16 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [themeTransition, setThemeTransition] = useState<"light" | "dark" | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [vault, setVault] = useState<EncryptedVault | null>(bootstrap.vault);
+  const [vaultStatus, setVaultStatus] = useState<VaultStatus>(bootstrap.vault ? "locked" : "unprotected");
+  const [vaultDialog, setVaultDialog] = useState<"setup" | "unlock" | null>(bootstrap.vault ? "unlock" : null);
+  const [vaultError, setVaultError] = useState("");
+  const [vaultBusy, setVaultBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLElement>(null);
   const filterDockRef = useRef<HTMLElement>(null);
+  const vaultKeyRef = useRef<CryptoKey | null>(null);
+  const vaultRef = useRef<EncryptedVault | null>(bootstrap.vault);
   const bounds = useMemo(() => getDateBounds(data), [data]);
   const metrics = useMemo(() => getMetrics(data, filters), [data, filters]);
   const trend = useMemo(() => getWeeklyTrend(data, filters), [data, filters]);
@@ -84,7 +91,14 @@ export default function Home() {
   }, [allRecords, query]);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; window.localStorage.setItem("spsa-cobil-theme", theme); }, [theme]);
-  useEffect(() => { window.localStorage.setItem("spsa-cobil-data-v2", JSON.stringify(data)); }, [data]);
+  useEffect(() => { vaultRef.current = vault; }, [vault]);
+  useEffect(() => {
+    const key = vaultKeyRef.current; const current = vaultRef.current;
+    if (!key || !current || vaultStatus !== "secured") return;
+    let active = true;
+    void updateVault(data, key, current).then((next) => { if (active) { vaultRef.current = next; setVault(next); persistVault(next); } }).catch(() => { if (active) notify("La sauvegarde chiffrée n’a pas pu être actualisée.", "error"); });
+    return () => { active = false; };
+  }, [data, vaultStatus]);
   useEffect(() => { setFilters((current) => ({ ...current, from: current.from || bounds.min, to: current.to || bounds.max })); }, [bounds.min, bounds.max]);
   useEffect(() => { const onScroll = () => setScrolled(window.scrollY > 140); window.addEventListener("scroll", onScroll, { passive: true }); onScroll(); return () => window.removeEventListener("scroll", onScroll); }, []);
   useEffect(() => {
@@ -157,6 +171,24 @@ export default function Home() {
   };
   const toggleTheme = () => switchTheme(theme === "dark" ? "light" : "dark");
   const requestInstall = async () => { if (!installPrompt) { notify("Utilisez le menu du navigateur pour installer l’application lorsque l’option est disponible.", "info"); return; } await installPrompt.prompt(); const result = await installPrompt.userChoice; setInstallPrompt(null); notify(result.outcome === "accepted" ? "Installation demandée au navigateur" : "Installation annulée", result.outcome === "accepted" ? "success" : "info"); };
+  const setupVault = async (passphrase: string) => {
+    setVaultBusy(true); setVaultError("");
+    try { const created = await createVault(data, passphrase); vaultKeyRef.current = created.key; vaultRef.current = created.vault; setVault(created.vault); persistVault(created.vault); removeLegacyData(); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local chiffré activé"); }
+    catch { setVaultError("Le chiffrement n’a pas pu être activé dans ce navigateur."); }
+    finally { setVaultBusy(false); }
+  };
+  const unlockLocalVault = async (passphrase: string) => {
+    if (!vault) return;
+    setVaultBusy(true); setVaultError("");
+    try { const opened = await unlockVault(vault, passphrase); vaultKeyRef.current = opened.key; setData(opened.data); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local déverrouillé"); }
+    catch { setVaultError("Phrase secrète incorrecte ou coffre local illisible."); }
+    finally { setVaultBusy(false); }
+  };
+  const lockLocalVault = () => { vaultKeyRef.current = null; setData(emptyData()); setFilters(defaultFilters); setRecordDialog(null); setExportKind(null); setVaultStatus("locked"); setVaultDialog("unlock"); notify("Coffre local verrouillé", "info"); };
+  const clearLocalWorkspace = () => {
+    if (!window.confirm("Supprimer définitivement les données locales et le coffre chiffré de cet appareil ?")) return;
+    clearVault(); vaultKeyRef.current = null; vaultRef.current = null; setVault(null); setVaultStatus("unprotected"); setVaultDialog(null); setData(emptyData()); setFilters(defaultFilters); notify("Coffre local et données supprimés", "info");
+  };
 
   useEffect(() => { if (exportKind && (view === "dashboard" || view === "report")) setExportKind(activeExportKind); }, [activeExportKind, exportKind, view]);
 
@@ -201,7 +233,7 @@ export default function Home() {
       <div className="page-content">
         <AnimatePresence mode="wait">{view === "dashboard" ? <Dashboard key="dashboard" filterDockRef={filterDockRef} data={data} metrics={metrics} trend={trend} filters={filters} bounds={bounds} activeFilterCount={activeFilterCount} onFilterChange={setFilters} onReset={resetFilters} onImport={() => inputRef.current?.click()} onNavigate={navigate} onExport={() => startExport("dashboard")} />
           : view === "report" ? <WeeklyReport key="report" data={data} metrics={metrics} editing={reportEditing} onEdit={() => setReportEditing(true)} onCancel={() => setReportEditing(false)} onSave={saveReport} onExport={() => startExport("report")} />
-          : view === "settings" ? <SettingsPage key="settings" theme={theme} data={data} canInstall={Boolean(installPrompt)} onInstall={() => { void requestInstall(); }} onTheme={switchTheme} onClear={() => { if (window.confirm("Réinitialiser les données locales de travail ?")) { setData(emptyData()); setFilters(defaultFilters); notify("Espace de travail réinitialisé", "info"); } }} />
+          : view === "settings" ? <SettingsPage key="settings" theme={theme} data={data} canInstall={Boolean(installPrompt)} vaultStatus={vaultStatus} onInstall={() => { void requestInstall(); }} onSetupVault={() => { setVaultError(""); setVaultDialog("setup"); }} onLockVault={lockLocalVault} onUnlockVault={() => { setVaultError(""); setVaultDialog("unlock"); }} onTheme={switchTheme} onClear={clearLocalWorkspace} />
           : <ModulePage key={view} module={MODULE_BY_KEY[view]} records={data.modules[view].map((record, index) => ({ record, index })).filter(({ record }) => matchesFilters(record, filters))} onCreate={() => setRecordDialog({ module: view, index: null, values: {} })} onEdit={(index, record) => setRecordDialog({ module: view, index, values: { ...record } })} onDelete={(index) => deleteRecord(view, index)} />}</AnimatePresence>
       </div>
     </main>
@@ -211,6 +243,7 @@ export default function Home() {
     <AnimatePresence>{showSearch && <SearchOverlay query={query} setQuery={setQuery} results={searchResults} onClose={() => setShowSearch(false)} onOpen={(module) => navigate(module)} />}</AnimatePresence>
     <AnimatePresence>{exportKind && <ExportDialog kind={exportKind} data={data} filters={filters} bounds={bounds} previewRef={previewRef} onClose={() => setExportKind(null)} onKindChange={(kind) => { setExportKind(kind); navigate(kind); }} onFilterChange={setFilters} onPdf={downloadPdf} onXlsx={() => { void exportXlsx(data, filters).then(() => notify("Classeur XLSX téléchargé")).catch(() => notify("La génération du classeur a rencontré un problème.", "error")); }} />}</AnimatePresence>
     <AnimatePresence>{recordDialog && <RecordEditor dialog={recordDialog} onClose={() => setRecordDialog(null)} onChange={(values) => setRecordDialog((current) => current ? { ...current, values } : current)} onSubmit={saveRecord} />}</AnimatePresence>
+    <AnimatePresence>{vaultDialog && <VaultDialog mode={vaultDialog} busy={vaultBusy} error={vaultError} onSetup={setupVault} onUnlock={unlockLocalVault} onClose={() => { if (vaultDialog === "setup") setVaultDialog(null); }} />}</AnimatePresence>
   </div>;
 }
 
@@ -222,7 +255,7 @@ function Dashboard({ filterDockRef, data, metrics, trend, filters, bounds, activ
     { label: "Achats en attente", value: metrics.purchasesWaiting, meta: `${metrics.vendorsToFollow} relance(s) fournisseur`, icon: ReceiptText, tone: "amber" },
   ];
   return <motion.div className="view-stack" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}>
-    <section className="dashboard-hero"><div className="dashboard-hero__copy"><p className="eyebrow"><Sparkles size={14} /> Pilotage IT · SPSA COBIL</p><h1>Les signaux qui <em>méritent</em> votre attention.</h1><p className="hero-lede">Un espace de lecture précis pour transformer la matière opérationnelle en décisions situées dans le temps.</p><div className="hero-actions"><button className="primary-button" onClick={onImport}><Upload size={17} />Importer un classeur</button><button className="text-button" onClick={onExport}>Préparer la synthèse <ArrowRight size={16} /></button></div></div><div className="dashboard-hero__lens"><img src="/manus-storage/spsa-cobil-export-seal_6dc79461.jpg" alt="" /><div className="lens-caption"><span>ESPACE ACTIF</span><b>{metrics.totalRecords ? `${metrics.totalRecords} signal${metrics.totalRecords > 1 ? "aux" : ""} analysé${metrics.totalRecords > 1 ? "s" : ""}` : "Prêt à recevoir vos données"}</b></div></div></section>
+    <section className="dashboard-hero"><div className="dashboard-hero__copy"><p className="eyebrow"><Sparkles size={14} /> Pilotage IT · SPSA COBIL</p><h1>Les signaux qui <em>méritent</em> votre attention.</h1><p className="hero-lede">Un espace de lecture précis pour transformer la matière opérationnelle en décisions situées dans le temps.</p><div className="hero-actions"><button className="primary-button" onClick={onImport}><Upload size={17} />Importer un classeur</button><button className="text-button" onClick={onExport}>Préparer la synthèse <ArrowRight size={16} /></button></div></div><div className="dashboard-hero__lens"><img src={brandIcon} alt="" /><div className="lens-caption"><span>ESPACE ACTIF</span><b>{metrics.totalRecords ? `${metrics.totalRecords} signal${metrics.totalRecords > 1 ? "aux" : ""} analysé${metrics.totalRecords > 1 ? "s" : ""}` : "Prêt à recevoir vos données"}</b></div></div></section>
     <section ref={filterDockRef} className="filter-dock glass-panel"><div className="filter-dock__heading"><div><p className="eyebrow"><CalendarDays size={14} /> Périmètre de lecture</p><h2>Temporalité active</h2></div>{activeFilterCount > 0 && <button className="soft-button" onClick={onReset}><RotateCcw size={14} />Réinitialiser <span>{activeFilterCount}</span></button>}</div><DoubleRangeSlider min={bounds.min} max={bounds.max} ticks={bounds.ticks} from={filters.from} to={filters.to} onChange={(from, to) => onFilterChange({ ...filters, from, to })} /><div className="filter-selects"><FilterSelect label="Responsable" value={filters.responsible} options={Array.from(new Set(MODULES.flatMap((module) => data.modules[module.key].map(getResponsible)).filter(Boolean))).sort()} onChange={(responsible) => onFilterChange({ ...filters, responsible })} /><FilterSelect label="Site" value={filters.site} options={Array.from(new Set(data.modules.equipements.map(getSite).filter(Boolean))).sort()} onChange={(site) => onFilterChange({ ...filters, site })} /><button className="filter-more" onClick={() => onNavigate("settings")}><ListFilter size={15} />Préréglages</button></div></section>
     <section className="kpi-grid">{cards.map((card, index) => <motion.article className={`kpi-card kpi-card--${card.tone}`} key={card.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 + index * 0.05, duration: 0.32 }}><div className="kpi-card__top"><span>{card.label}</span><i><card.icon size={17} /></i></div><AnimatedNumber value={card.value} /><p>{card.meta}</p><div className="kpi-card__glow" /></motion.article>)}</section>
     <section className="dashboard-grid"><article className="glass-panel trend-panel"><div className="panel-heading"><div><p className="eyebrow">Rythme opérationnel</p><h2>Signal hebdomadaire</h2></div><span className="panel-context">{trend.length ? `${trend.length} semaines` : "À alimenter"}</span></div>{trend.length ? <div className="trend-chart">{trend.map((point) => <div className="trend-bar" key={point.key}><div className="trend-bar__area"><i style={{ height: `${Math.max(7, point.activities * 17)}%` }} title={`${point.activities} activité(s)`} /><b style={{ height: `${Math.max(6, point.incidents * 17)}%` }} title={`${point.incidents} incident(s)`} /></div><span>{point.label}</span></div>)}</div> : <EmptyState title="Le rythme apparaîtra ici" text="Importez ou saisissez des activités et incidents datés pour construire la lecture hebdomadaire." action="Importer le classeur" onAction={onImport} />}</article>
@@ -248,8 +281,15 @@ function ModulePage({ module, records, onCreate, onEdit, onDelete }: { module: t
   return <motion.div className="view-stack module-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="module-hero"><div className="module-hero__icon"><IconComponent size={24} /></div><div><p className="eyebrow">{module.eyebrow}</p><h1>{module.label}</h1><p>{module.description}</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />Nouvelle entrée</button></section><section className="table-shell glass-panel"><div className="table-toolbar"><div className="table-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher dans ce registre" /></div><NebulaSelect value={status === "all" ? "" : status} onChange={(value) => setStatus(value || "all")} options={statuses} emptyLabel="Tous les statuts" className="table-status-select" /><span>{filtered.length} résultat{filtered.length > 1 ? "s" : ""}</span></div>{filtered.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr>{module.headers.filter((header) => header !== "ID").slice(0, 6).map((header) => <th key={header}>{header}</th>)}<th aria-label="Actions" /></tr></thead><tbody>{filtered.map(({ record, index }) => <tr key={`${module.key}-${index}`}><td className="table-primary">{record[module.primaryField] || "Sans libellé"}</td>{module.headers.filter((header) => header !== "ID" && header !== module.primaryField).slice(0, 5).map((header) => <td key={header}>{header === "Statut" || header === "État" ? <span className={`status-pill status-pill--${statusTone(record[header])}`}>{record[header] || "—"}</span> : header === "Priorité" ? <span className={`priority-pill priority-pill--${priorityTone(record[header])}`}>{record[header] || "Normale"}</span> : record[header] || "—"}</td>)}<td><div className="row-actions"><button onClick={() => onEdit(index, record)} aria-label="Modifier"><PenLine size={15} /></button><button onClick={() => onDelete(index)} aria-label="Supprimer"><Trash2 size={15} /></button></div></td></tr>)}</tbody></table></div> : <EmptyState title="Aucune entrée dans ce périmètre" text="Créez une première entrée ou ajustez votre recherche et vos filtres globaux." action="Nouvelle entrée" onAction={onCreate} />}</section></motion.div>;
 }
 
-function SettingsPage({ theme, data, canInstall, onInstall, onTheme, onClear }: { theme: "light" | "dark"; data: AppData; canInstall: boolean; onInstall: () => void; onTheme: (theme: "light" | "dark") => void; onClear: () => void }) {
-  return <motion.div className="view-stack settings-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="settings-hero"><p className="eyebrow"><Settings2 size={14} /> Environnement</p><h1>Préférences du <em>cockpit.</em></h1><p>Les réglages d’apparence et le dernier espace de travail sont stockés dans ce navigateur.</p></section><div className="settings-grid"><article className="glass-panel setting-card"><div><p className="eyebrow">Apparence</p><h2>Thème de lecture</h2><p>Deux interprétations conçues pour préserver les contrastes et le confort de travail.</p></div><div className="theme-choice"><button className={theme === "dark" ? "is-selected" : ""} onClick={() => onTheme("dark")}><Moon size={17} /><span><b>Nocturne</b><small>Encre boréale</small></span><i /></button><button className={theme === "light" ? "is-selected" : ""} onClick={() => onTheme("light")}><Sun size={17} /><span><b>Opalin</b><small>Blanc minéral</small></span><i /></button></div></article><article className="glass-panel setting-card"><div><p className="eyebrow">Espace local</p><h2>{data.sourceName}</h2><p>{data.updatedAt ? `Dernière mise à jour · ${formatDate(data.updatedAt)}` : "Aucune donnée importée ou saisie."}</p></div><button className="danger-button" onClick={onClear}><Trash2 size={16} />Réinitialiser les données locales</button></article><article className="glass-panel setting-card setting-card--pwa"><div><p className="eyebrow">Application installable</p><h2>Prête pour un usage récurrent.</h2><p>{canInstall ? "Le navigateur est prêt : installez le cockpit pour le retrouver comme une application autonome." : "Depuis le navigateur, utilisez l’action d’installation lorsqu’elle est proposée. Les données restent attachées à cet appareil."}</p><button className="primary-button pwa-install-button" onClick={onInstall}><Download size={16} />{canInstall ? "Installer l’application" : "Voir les options d’installation"}</button></div><ShieldCheck size={34} /></article></div></motion.div>;
+function SettingsPage({ theme, data, canInstall, vaultStatus, onInstall, onSetupVault, onLockVault, onUnlockVault, onTheme, onClear }: { theme: "light" | "dark"; data: AppData; canInstall: boolean; vaultStatus: VaultStatus; onInstall: () => void; onSetupVault: () => void; onLockVault: () => void; onUnlockVault: () => void; onTheme: (theme: "light" | "dark") => void; onClear: () => void }) {
+  const vaultCopy = vaultStatus === "secured" ? { title: "Coffre local actif.", text: "Les données saisies sont chiffrées localement avec votre phrase secrète. Elle ne quitte jamais cet appareil.", action: "Verrouiller maintenant" } : vaultStatus === "locked" ? { title: "Coffre local verrouillé.", text: "Les données chiffrées sont présentes sur cet appareil mais restent indisponibles sans votre phrase secrète.", action: "Déverrouiller le coffre" } : { title: "Protéger les données locales.", text: "Activez un chiffrement AES-GCM local pour ne plus conserver les données de pilotage en clair dans ce navigateur.", action: "Activer le coffre chiffré" };
+  return <motion.div className="view-stack settings-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="settings-hero"><p className="eyebrow"><Settings2 size={14} /> Environnement</p><h1>Préférences du <em>cockpit.</em></h1><p>Les réglages d’apparence et le dernier espace de travail sont stockés dans ce navigateur.</p></section><div className="settings-grid"><article className="glass-panel setting-card"><div><p className="eyebrow">Apparence</p><h2>Thème de lecture</h2><p>Deux interprétations conçues pour préserver les contrastes et le confort de travail.</p></div><div className="theme-choice"><button className={theme === "dark" ? "is-selected" : ""} onClick={() => onTheme("dark")}><Moon size={17} /><span><b>Nocturne</b><small>Encre boréale</small></span><i /></button><button className={theme === "light" ? "is-selected" : ""} onClick={() => onTheme("light")}><Sun size={17} /><span><b>Opalin</b><small>Blanc minéral</small></span><i /></button></div></article><article className="glass-panel setting-card setting-card--vault"><div><p className="eyebrow"><LockKeyhole size={13} /> Sécurité locale</p><h2>{vaultCopy.title}</h2><p>{vaultCopy.text}</p><button className="primary-button pwa-install-button" onClick={vaultStatus === "secured" ? onLockVault : vaultStatus === "locked" ? onUnlockVault : onSetupVault}>{vaultStatus === "secured" ? <LockKeyhole size={16} /> : vaultStatus === "locked" ? <Unlock size={16} /> : <KeyRound size={16} />}{vaultCopy.action}</button></div><ShieldCheck size={34} /></article><article className="glass-panel setting-card"><div><p className="eyebrow">Espace local</p><h2>{data.sourceName}</h2><p>{data.updatedAt ? `Dernière mise à jour · ${formatDate(data.updatedAt)}` : "Aucune donnée importée ou saisie."}</p></div><button className="danger-button" onClick={onClear}><Trash2 size={16} />Réinitialiser les données locales</button></article><article className="glass-panel setting-card setting-card--pwa"><div><p className="eyebrow">Application installable</p><h2>Prête pour un usage récurrent.</h2><p>{canInstall ? "Le navigateur est prêt : installez le cockpit pour le retrouver comme une application autonome." : "Depuis le navigateur, utilisez l’action d’installation lorsqu’elle est proposée. Les données restent attachées à cet appareil."}</p><button className="primary-button pwa-install-button" onClick={onInstall}><Download size={16} />{canInstall ? "Installer l’application" : "Voir les options d’installation"}</button></div><ShieldCheck size={34} /></article></div></motion.div>;
+}
+
+function VaultDialog({ mode, busy, error, onSetup, onUnlock, onClose }: { mode: "setup" | "unlock"; busy: boolean; error: string; onSetup: (passphrase: string) => void; onUnlock: (passphrase: string) => void; onClose: () => void }) {
+  const [passphrase, setPassphrase] = useState(""); const [confirmation, setConfirmation] = useState(""); const isSetup = mode === "setup"; const valid = isSetup ? passphrase.length >= 12 && passphrase === confirmation : passphrase.length > 0;
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!valid || busy) return; if (isSetup) onSetup(passphrase); else onUnlock(passphrase); };
+  return <motion.div className="modal-backdrop vault-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><motion.form className="vault-dialog" initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} onSubmit={submit}><div className="vault-dialog__seal"><LockKeyhole size={24} /></div><p className="eyebrow">Coffre local Nebula</p><h2>{isSetup ? "Protéger cet espace de travail." : "Déverrouiller cet espace."}</h2><p>{isSetup ? "Choisissez une phrase secrète d’au moins 12 caractères. Elle chiffre les données de ce navigateur et ne peut pas être récupérée par SPSA COBIL." : "Saisissez la phrase secrète qui chiffre les données stockées sur cet appareil."}</p><label className="vault-field"><span>Phrase secrète</span><input autoFocus type="password" autoComplete={isSetup ? "new-password" : "current-password"} value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="Au moins 12 caractères" /></label>{isSetup && <label className="vault-field"><span>Confirmer la phrase secrète</span><input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Ressaisissez la phrase secrète" /></label>}{isSetup && passphrase && passphrase.length < 12 && <small className="vault-hint">Utilisez au moins 12 caractères.</small>}{isSetup && confirmation && confirmation !== passphrase && <small className="vault-error">Les phrases secrètes ne correspondent pas.</small>}{error && <small className="vault-error">{error}</small>}<div className="vault-dialog__actions">{isSetup && <button type="button" className="soft-button" onClick={onClose}>Annuler</button>}<button type="submit" className="primary-button vault-dialog__submit" disabled={!valid || busy}>{busy ? "Sécurisation…" : isSetup ? "Activer le chiffrement" : "Déverrouiller"}<ArrowRight size={16} /></button></div><small className="vault-footer">AES-256-GCM · PBKDF2-SHA-256 · Clé non stockée</small></motion.form></motion.div>;
 }
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) { return <label className="filter-select"><span>{label}</span><NebulaSelect value={value} onChange={onChange} options={options} emptyLabel="Tous" /></label>; }

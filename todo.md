@@ -23,3 +23,11 @@
 - [x] Désactiver le défilement vertical inutile sur mobile et tester les interactions tactiles.
 - [x] Finaliser la PWA et le workflow GitHub Pages, puis préparer le dépôt GitHub.
 - [x] Valider les contrôles, le build et la version de publication avant confirmation de mise en ligne.
+- [x] Créer le dépôt public GitHub, pousser la branche main et vérifier le déploiement Pages.
+- [x] Vérifier l’URL GitHub Pages et le manifeste PWA après la publication.
+- [x] Mettre à jour le manifeste publié avec les couleurs Nebula et relancer le déploiement Pages.
+- [x] Auditer la persistance locale actuelle et les URL d’icônes sur GitHub Pages.
+- [x] Ajouter un coffre local chiffré et un parcours de déverrouillage explicite.
+- [x] Corriger le logo public, créer un favicon et compléter les icônes du manifeste PWA.
+- [x] Tester la restauration chiffrée, les icônes et l’installation PWA avant publication.
+- [ ] Publier la version sécurisée et vérifier les ressources sur GitHub Pages.

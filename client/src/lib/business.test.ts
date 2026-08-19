@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { emptyData, getDateBounds, getMetrics, getWeeklyTrend, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
+import { createVault, unlockVault } from "@/lib/secureStorage";
 
 describe("logique métier SPSA COBIL", () => {
   it("applique simultanément le filtre de période, de responsable et de site", () => {
@@ -56,5 +57,15 @@ describe("logique métier SPSA COBIL", () => {
     expect(data.modules.suivi[0]["Activité / Demande"]).toBe("Connexion VPN");
     expect(data.report.startDate).toBe("2026-08-03");
     expect(data.report.realisations).toBe("Mise à jour du VPN");
+  });
+
+  it("chiffre les données locales et impose la phrase secrète pour les restituer", async () => {
+    const data = emptyData("jeu de test chiffré");
+    data.modules.achats = [{ Date: "2026-08-19", "Équipement / Service": "Routeur sécurisé" }];
+    const { vault } = await createVault(data, "phrase-secrete-de-test-2026");
+    expect(vault.ciphertext).not.toContain("Routeur sécurisé");
+    await expect(unlockVault(vault, "phrase-invalide-2026")).rejects.toBeDefined();
+    const restored = await unlockVault(vault, "phrase-secrete-de-test-2026");
+    expect(restored.data.modules.achats[0]["Équipement / Service"]).toBe("Routeur sécurisé");
   });
 });

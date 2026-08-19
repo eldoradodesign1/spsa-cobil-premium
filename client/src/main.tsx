@@ -1,4 +1,4 @@
-/** SPSA COBIL — Lentille Boréale : amorçage PWA et rendu React. */
+/** SPSA COBIL — Nebula : amorçage PWA et rendu React. */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

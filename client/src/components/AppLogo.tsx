@@ -1,9 +1,9 @@
-/** SPSA COBIL — Lentille Boréale : symbole de lentille stratifiée, toujours lisible sur verre. */
+/** SPSA COBIL — Nebula : symbole de lentille stratifiée servi depuis les ressources publiques du build. */
 type AppLogoProps = { compact?: boolean; className?: string };
 
 export function AppLogo({ compact = false, className = "" }: AppLogoProps) {
   return <div className={`brand-lockup ${compact ? "brand-lockup--compact" : ""} ${className}`}>
-    <img src="/manus-storage/spsa-cobil-mark_2a35566d.png" alt="" className="brand-mark" />
+    <img src={`${import.meta.env.BASE_URL}icons/icon-192.png`} alt="" className="brand-mark" />
     {!compact && <div className="brand-wordmark"><strong>SPSA</strong><span>COBIL</span></div>}
   </div>;
 }
