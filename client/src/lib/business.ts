@@ -233,6 +233,15 @@ export const formatDate = (value: string, withYear = true) => {
   return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", ...(withYear ? { year: "numeric" } : {}) }).format(date).replace(".", "");
 };
 
+export const parseMoney = (value: string | number = "") => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const raw = String(value).trim().replace(/\s/g, "").replace(/[^0-9,.-]/g, "");
+  if (!raw) return 0;
+  const normalized = raw.includes(",") && raw.includes(".") ? (raw.lastIndexOf(",") > raw.lastIndexOf(".") ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(/,/g, "")) : raw.replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+};
+
 export const formatMoney = (value: string | number) => {
   const amount = Number(value);
   return Number.isFinite(amount) ? new Intl.NumberFormat("fr-FR", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount) : "—";
@@ -241,6 +250,15 @@ export const formatMoney = (value: string | number) => {
 export const getRecordDate = (record: RecordItem) => dateColumns.map((key) => record[key] || "").find(Boolean) || "";
 export const getResponsible = (record: RecordItem) => record.Responsable || record.Demandeur || record.Approbateur || "";
 export const getSite = (record: RecordItem) => record.Site || "";
+
+export const getNextEquipmentId = (data: AppData) => {
+  const highest = data.modules.equipements.reduce((max, record) => {
+    const matches = (record["Asset ID"] || "").match(/(\d+)$/);
+    const value = matches ? Number(matches[1]) : 0;
+    return Number.isFinite(value) ? Math.max(max, value) : max;
+  }, 0);
+  return `EQ-${String(highest + 1).padStart(4, "0")}`;
+};
 
 export const matchesFilters = (record: RecordItem, filters: Filters) => {
   const date = getRecordDate(record);
@@ -303,6 +321,7 @@ export const getMetrics = (data: AppData, filters: Filters) => {
     projectsInProgress: projects.filter((record) => record.Statut === "En cours").length,
     projectsLate: projects.filter((record) => record.Statut === "En retard" || isPast(record.Échéance)).length,
     purchasesWaiting: purchases.filter((record) => record.Statut === "En attente").length,
+    totalPurchaseAmount: purchases.reduce((sum, record) => sum + parseMoney(record["Montant USD"]), 0),
     vendorsToFollow: vendors.filter((record) => ["En attente", "À relancer"].includes(record.Statut)).length,
     equipment: equipment.length,
     totalRecords: Object.values(scoped).flat().length,

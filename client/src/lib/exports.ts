@@ -11,7 +11,7 @@ const blue = "FF3E72E8";
 const rose = "FFE56A9F";
 const line = "FFD8D6F2";
 const white = "FFFFFFFF";
-const logoPath = `${import.meta.env.BASE_URL}icons/icon-512.png`;
+const logoPath = `${import.meta.env.BASE_URL}icons/spsa-cobil-logo.png`;
 
 const titleStyle: Partial<ExcelJS.Style> = { font: { name: "Aptos Display", size: 16, bold: true, color: { argb: white } }, fill: { type: "pattern", pattern: "solid", fgColor: { argb: ink } }, alignment: { vertical: "middle" } };
 const headerStyle: Partial<ExcelJS.Style> = { font: { name: "Aptos", size: 10, bold: true, color: { argb: white } }, fill: { type: "pattern", pattern: "solid", fgColor: { argb: violet } }, alignment: { vertical: "middle", wrapText: true }, border: { bottom: { style: "thin", color: { argb: "FF4A42B2" } } } };
@@ -89,9 +89,9 @@ function buildModule(workbook: ExcelJS.Workbook, definition: ModuleDefinition, r
   return sheet;
 }
 
-function downloadWorkbook(buffer: ArrayBuffer) {
+function downloadWorkbook(buffer: ArrayBuffer, suffix = "Pilotage_IT") {
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `SPSA-COBIL_Pilotage_IT_${new Date().toISOString().slice(0, 10)}.xlsx`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `SPSA-COBIL_${suffix}_${new Date().toISOString().slice(0, 10)}.xlsx`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function exportXlsx(data: AppData, filters: Filters) {
@@ -101,7 +101,7 @@ export async function exportXlsx(data: AppData, filters: Filters) {
   const buffer = await workbook.xlsx.writeBuffer(); downloadWorkbook(buffer as ArrayBuffer);
 }
 
-export async function exportPdf(element: HTMLElement, kind: "dashboard" | "report") {
+export async function exportPdf(element: HTMLElement, kind: "dashboard" | "report" | "compiled" | "module", moduleLabel = "Rubrique") {
   const logo = await logoDataUri();
   const canvas = await html2canvas(element, {
     scale: 2,
@@ -114,9 +114,10 @@ export async function exportPdf(element: HTMLElement, kind: "dashboard" | "repor
     },
   });
   const image = canvas.toDataURL("image/png"); const document = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" }); const width = 190; const height = (canvas.height * width) / canvas.width; const pageHeight = 277; let rendered = 0;
-  document.setProperties({ title: `SPSA COBIL — ${kind === "dashboard" ? "Pilotage IT" : "Rapport hebdomadaire"}` });
+  document.setProperties({ title: `SPSA COBIL — ${kind === "dashboard" ? "Pilotage IT" : kind === "report" ? "Rapport hebdomadaire" : kind === "compiled" ? "Pack de pilotage complet" : `Détail ${moduleLabel}`}` });
   while (rendered < height) { if (rendered > 0) document.addPage(); document.addImage(image, "PNG", 10, 10 - rendered, width, height, undefined, "FAST"); document.setTextColor(90, 84, 200); document.setFontSize(7); document.text("SPSA COBIL · NEBULA EDITION · Document préparé depuis le cockpit de pilotage", 10, 291); rendered += pageHeight; }
-  document.save(`SPSA-COBIL_${kind === "dashboard" ? "Pilotage_IT" : "Rapport_Hebdomadaire"}.pdf`);
+  const moduleSlug = moduleLabel.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "");
+  document.save(`SPSA-COBIL_${kind === "dashboard" ? "Pilotage_IT" : kind === "report" ? "Rapport_Hebdomadaire" : kind === "compiled" ? "Pack_Complet" : `Rubrique_${moduleSlug}`}.pdf`);
 }
 
 export const reportDateLabel = (data: AppData) => data.report.startDate || data.report.endDate ? `${formatDate(data.report.startDate)} — ${formatDate(data.report.endDate)}` : "Période à renseigner";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { emptyData, getDateBounds, getMetrics, getWeeklyTrend, importPreviewToData, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
+import { emptyData, getDateBounds, getMetrics, getNextEquipmentId, getWeeklyTrend, importPreviewToData, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
 import { createVault, unlockVault } from "@/lib/secureStorage";
 
 describe("logique métier SPSA COBIL", () => {
@@ -19,7 +19,7 @@ describe("logique métier SPSA COBIL", () => {
     ];
     data.modules.incidents = [{ Date: "2026-08-05", Description: "Messagerie", Statut: "Ouvert" }];
     data.modules.projets = [{ "Date début": "2026-08-02", Projet: "WAN", Statut: "En cours", Échéance: "2026-08-12" }];
-    data.modules.achats = [{ Date: "2026-08-05", "Équipement / Service": "Switch", Statut: "En attente" }];
+    data.modules.achats = [{ Date: "2026-08-05", "Équipement / Service": "Switch", Statut: "En attente", "Montant USD": "1 250,50" }, { Date: "2026-08-12", "Équipement / Service": "Firewall", Statut: "Approuvé", "Montant USD": "300" }];
     const filters = { from: "2026-08-01", to: "2026-08-09", responsible: "", site: "" };
     const metrics = getMetrics(data, filters);
     expect(metrics.activitiesDone).toBe(1);
@@ -27,6 +27,7 @@ describe("logique métier SPSA COBIL", () => {
     expect(metrics.incidentsOpen).toBe(1);
     expect(metrics.projectsInProgress).toBe(1);
     expect(metrics.purchasesWaiting).toBe(1);
+    expect(metrics.totalPurchaseAmount).toBe(1250.5);
     expect(metrics.alerts).toHaveLength(2);
     expect(getWeeklyTrend(data, filters)).toHaveLength(1);
   });
@@ -67,6 +68,12 @@ describe("logique métier SPSA COBIL", () => {
     expect(data.modules.suivi).toHaveLength(1);
     expect(data.modules.suivi[0]["Activité / Demande"]).toBe("Accès VPN");
     expect(data.modules.projets).toHaveLength(0);
+  });
+
+  it("génère le prochain identifiant d’équipement sans écraser les formats importés", () => {
+    const data = emptyData();
+    data.modules.equipements = [{ "Asset ID": "EQ-0003" }, { "Asset ID": "IT-2026-014" }, { "Asset ID": "manuel" }];
+    expect(getNextEquipmentId(data)).toBe("EQ-0015");
   });
 
   it("chiffre les données locales et impose la phrase secrète pour les restituer", async () => {
