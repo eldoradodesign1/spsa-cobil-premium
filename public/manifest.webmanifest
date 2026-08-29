@@ -1,0 +1,19 @@
+{
+  "name": "SPSA COBIL · Pilotage IT",
+  "short_name": "SPSA COBIL",
+  "description": "Cockpit de pilotage IT SPSA COBIL.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#071b13",
+  "theme_color": "#00864b",
+  "icons": [
+    { "src": "./icons/spsa-cobil-logo.png", "sizes": "1024x927", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/spsa-cobil-logo.png", "sizes": "1024x927", "type": "image/png", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Vue de direction", "short_name": "Pilotage", "description": "Ouvrir la vue de direction", "url": "./?view=dashboard", "icons": [{ "src": "./icons/spsa-cobil-logo.png", "sizes": "192x192" }] },
+    { "name": "Rapport hebdomadaire", "short_name": "Rapport", "description": "Ouvrir le rapport hebdomadaire", "url": "./?view=report", "icons": [{ "src": "./icons/spsa-cobil-logo.png", "sizes": "192x192" }] }
+  ]
+}

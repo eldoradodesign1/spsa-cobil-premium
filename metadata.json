@@ -1,0 +1,6 @@
+{
+  "name": "SPSA COBIL · Pilotage IT",
+  "description": "Cockpit de pilotage IT pour agréger les registres opérationnels, préparer les rapports hebdomadaires et exporter des livrables en XLSX et PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
