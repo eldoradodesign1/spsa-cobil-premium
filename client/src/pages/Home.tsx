@@ -360,7 +360,7 @@ export default function Home() {
       <div className={`mobile-period-strip ${isTopbarPeriodVisible ? "is-visible" : ""}`} aria-label="Période active"><DoubleRangeSlider min={bounds.min} max={bounds.max} ticks={bounds.ticks} from={filters.from} to={filters.to} compact onChange={(from, to) => setFilters((current) => ({ ...current, from, to }))} /></div>
 
       <div className="page-content">
-        <AnimatePresence mode="wait">{view === "dashboard" ? <Dashboard key="dashboard" filterDockRef={filterDockRef} data={data} metrics={metrics} trend={trend} filters={filters} bounds={bounds} activeFilterCount={activeFilterCount} onFilterChange={setFilters} onReset={resetFilters} onImport={() => inputRef.current?.click()} onNavigate={navigate} onExport={() => startExport("dashboard")} />
+        <AnimatePresence mode="wait">{view === "dashboard" ? <Dashboard key="dashboard" filterDockRef={filterDockRef} data={data} metrics={metrics} trend={trend} filters={filters} bounds={bounds} activeFilterCount={activeFilterCount} theme={theme} onFilterChange={setFilters} onReset={resetFilters} onImport={() => inputRef.current?.click()} onNavigate={navigate} onExport={() => startExport("dashboard")} />
           : view === "report" ? <WeeklyReport key="report" data={data} metrics={metrics} editing={reportEditing} onEdit={() => setReportEditing(true)} onCancel={() => setReportEditing(false)} onSave={saveReport} onExport={() => startExport("report")} />
           : view === "settings" ? <SettingsPage key="settings" theme={theme} data={data} canInstall={Boolean(installPrompt)} vaultStatus={vaultStatus} onInstall={() => { void requestInstall(); }} onSetupVault={() => { setVaultError(""); setVaultDialog("setup"); }} onLockVault={lockLocalVault} onUnlockVault={() => { setVaultError(""); setVaultDialog("unlock"); }} onTheme={switchTheme} fontSet={fontSet} displayStyle={displayStyle} onFontSet={setFontSet} onDisplayStyle={setDisplayStyle} onClear={clearLocalWorkspace} />
           : <ModulePage key={view} module={MODULE_BY_KEY[view]} records={data.modules[view].map((record, index) => ({ record, index })).filter(({ record }) => matchesFilters(record, filters))} onCreate={() => setRecordDialog({ module: view, index: null, values: view === "equipements" ? { "Asset ID": getNextEquipmentId(data) } : {} })} onEdit={(index, record) => setRecordDialog({ module: view, index, values: { ...record } })} onDelete={(index) => deleteRecord(view, index)} />}</AnimatePresence>
@@ -379,7 +379,7 @@ export default function Home() {
   </div>;
 }
 
-function Dashboard({ filterDockRef, data, metrics, trend, filters, bounds, activeFilterCount, onFilterChange, onReset, onImport, onNavigate, onExport }: { filterDockRef: React.RefObject<HTMLElement | null>; data: AppData; metrics: ReturnType<typeof getMetrics>; trend: ReturnType<typeof getWeeklyTrend>; filters: Filters; bounds: ReturnType<typeof getDateBounds>; activeFilterCount: number; onFilterChange: (value: Filters) => void; onReset: () => void; onImport: () => void; onNavigate: (value: View) => void; onExport: () => void }) {
+function Dashboard({ filterDockRef, data, metrics, trend, filters, bounds, activeFilterCount, theme, onFilterChange, onReset, onImport, onNavigate, onExport }: { filterDockRef: React.RefObject<HTMLElement | null>; data: AppData; metrics: ReturnType<typeof getMetrics>; trend: ReturnType<typeof getWeeklyTrend>; filters: Filters; bounds: ReturnType<typeof getDateBounds>; activeFilterCount: number; theme: "light" | "dark"; onFilterChange: (value: Filters) => void; onReset: () => void; onImport: () => void; onNavigate: (value: View) => void; onExport: () => void }) {
   const cards = [
     { label: "Activités terminées", value: metrics.activitiesDone, meta: `${metrics.activitiesInProgress} en cours`, icon: Check, tone: "teal" },
     { label: "Incidents ouverts", value: metrics.incidentsOpen, meta: `${metrics.incidentsResolved} résolu(s)`, icon: CircleAlert, tone: "coral" },
@@ -388,7 +388,37 @@ function Dashboard({ filterDockRef, data, metrics, trend, filters, bounds, activ
     { label: "Montant des achats", value: metrics.totalPurchaseAmount, meta: "Cumul de la période active", icon: CircleDollarSign, tone: "green", money: true },
   ];
   return <motion.div className="view-stack" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}>
-    <section className="dashboard-hero"><div className="dashboard-hero__copy"><p className="eyebrow"><Sparkles size={14} /> Pilotage IT · SPSA COBIL</p><h1>Les signaux qui <em>méritent</em> votre attention.</h1><p className="hero-lede">Un espace de lecture précis pour transformer la matière opérationnelle en décisions situées dans le temps.</p><div className="hero-actions"><button className="primary-button" onClick={onImport}><Upload size={17} />Importer un classeur</button><button className="text-button" onClick={onExport}>Préparer la synthèse <ArrowRight size={16} /></button></div></div></section>
+    <section className="dashboard-hero">
+      <div className="dashboard-hero__mockup-wrap" aria-hidden="true">
+        <img
+          src={`${import.meta.env.BASE_URL}assets/images/${theme === "dark" ? "hero_cobil_dark_1787999379157.jpg" : "hero_cobil_light_1787999342857.jpg"}`}
+          alt="Atmosphère 3D SPSA COBIL"
+          className="dashboard-hero__mockup-img"
+          referrerPolicy="no-referrer"
+        />
+        <div className="dashboard-hero__mockup-overlay" />
+      </div>
+      <div className="dashboard-hero__inner">
+        <div className="dashboard-hero__copy">
+          <p className="eyebrow"><Sparkles size={14} /> Pilotage IT · SPSA COBIL</p>
+          <h1>Les signaux qui <em>méritent</em> votre attention.</h1>
+          <p className="hero-lede">Un espace de lecture précis pour transformer la matière opérationnelle en décisions situées dans le temps.</p>
+          <div className="hero-actions">
+            <button className="primary-button" onClick={onImport}><Upload size={17} />Importer un classeur</button>
+            <button className="text-button" onClick={onExport}>Préparer la synthèse <ArrowRight size={16} /></button>
+          </div>
+        </div>
+        <div className="dashboard-hero__brand-badge">
+          <div className="dashboard-hero__brand-glass">
+            <AppLogo showText={false} size={48} />
+            <div className="dashboard-hero__brand-info">
+              <span className="dashboard-hero__brand-title">SPSA COBIL</span>
+              <span className="dashboard-hero__brand-sub">IT Cockpit & Energy Ops</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
     <section ref={filterDockRef} className="filter-dock glass-panel"><div className="filter-dock__heading"><div><p className="eyebrow"><CalendarDays size={14} /> Périmètre de lecture</p><h2>Temporalité active</h2></div>{activeFilterCount > 0 && <button className="soft-button" onClick={onReset}><RotateCcw size={14} />Réinitialiser <span>{activeFilterCount}</span></button>}</div><DoubleRangeSlider min={bounds.min} max={bounds.max} ticks={bounds.ticks} from={filters.from} to={filters.to} onChange={(from, to) => onFilterChange({ ...filters, from, to })} /><div className="filter-selects"><FilterSelect label="Responsable" value={filters.responsible} options={Array.from(new Set(MODULES.flatMap((module) => data.modules[module.key].map(getResponsible)).filter(Boolean))).sort()} onChange={(responsible) => onFilterChange({ ...filters, responsible })} /><FilterSelect label="Site" value={filters.site} options={Array.from(new Set(data.modules.equipements.map(getSite).filter(Boolean))).sort()} onChange={(site) => onFilterChange({ ...filters, site })} /><button className="filter-more" onClick={() => onNavigate("settings")}><ListFilter size={15} />Préréglages</button></div></section>
     <section className="kpi-grid">{cards.map((card, index) => <motion.article className={`kpi-card kpi-card--${card.tone}`} key={card.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 + index * 0.05, duration: 0.32 }}><div className="kpi-card__top"><span>{card.label}</span><i><card.icon size={17} /></i></div>{card.money ? <strong className="animated-number animated-number--money">{formatMoney(card.value)}</strong> : <AnimatedNumber value={card.value} />}<p>{card.meta}</p><div className="kpi-card__glow" /></motion.article>)}</section>
     <section className="dashboard-grid"><article className="glass-panel trend-panel"><div className="panel-heading"><div><p className="eyebrow">Rythme opérationnel</p><h2>Signal hebdomadaire</h2></div><span className="panel-context">{trend.length ? `${trend.length} semaines` : "À alimenter"}</span></div>{trend.length ? <div className="trend-chart">{trend.map((point) => <div className="trend-bar" key={point.key}><div className="trend-bar__area"><i style={{ height: `${Math.max(7, point.activities * 17)}%` }} title={`${point.activities} activité(s)`} /><b style={{ height: `${Math.max(6, point.incidents * 17)}%` }} title={`${point.incidents} incident(s)`} /></div><span>{point.label}</span></div>)}</div> : <EmptyState title="Le rythme apparaîtra ici" text="Importez ou saisissez des activités et incidents datés pour construire la lecture hebdomadaire." action="Importer le classeur" onAction={onImport} />}</article>
