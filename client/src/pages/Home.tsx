@@ -345,7 +345,7 @@ export default function Home() {
           <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir la navigation"><Menu size={20} /></button>
           {collapsed && (
             <button className="topbar__brand-chip" onClick={() => setCollapsed(false)} title="Déployer la navigation latérale (Raccourci B)" aria-label="SPSA COBIL - Déployer la navigation (B)">
-              <img src={`${import.meta.env.BASE_URL}icons/spsa-cobil-logo.png`} alt="SPSA COBIL" className="topbar__brand-mark" />
+              <AppLogo compact showText={false} size={22} />
               <span className="topbar__brand-text"><strong>SPSA</strong><span>COBIL</span></span>
             </button>
           )}
