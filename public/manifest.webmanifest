@@ -6,14 +6,16 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#071b13",
   "theme_color": "#00864b",
   "icons": [
-    { "src": "./icons/spsa-cobil-logo.png", "sizes": "1024x927", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/spsa-cobil-logo.png", "sizes": "1024x927", "type": "image/png", "purpose": "any" }
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Vue de direction", "short_name": "Pilotage", "description": "Ouvrir la vue de direction", "url": "./?view=dashboard", "icons": [{ "src": "./icons/spsa-cobil-logo.png", "sizes": "192x192" }] },
-    { "name": "Rapport hebdomadaire", "short_name": "Rapport", "description": "Ouvrir le rapport hebdomadaire", "url": "./?view=report", "icons": [{ "src": "./icons/spsa-cobil-logo.png", "sizes": "192x192" }] }
+    { "name": "Vue de direction", "short_name": "Pilotage", "description": "Ouvrir la vue de direction", "url": "./?view=dashboard", "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Rapport hebdomadaire", "short_name": "Rapport", "description": "Ouvrir le rapport hebdomadaire", "url": "./?view=report", "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }
