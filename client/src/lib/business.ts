@@ -215,7 +215,6 @@ export const emptyData = (sourceName = "SPSA-COBIL · espace de travail") : AppD
 });
 
 const dateColumns = ["Date", "Date début", "Date demande", "Date acquisition", "Date approbation"];
-
 export const todayIso = () => new Date().toISOString().slice(0, 10);
 export const toIsoDate = (value: unknown) => {
   if (!value) return "";
@@ -225,6 +224,22 @@ export const toIsoDate = (value: unknown) => {
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? text : date.toISOString().slice(0, 10);
 };
+const looksLikeIsoDate = (value: unknown) => /^\d{4}-\d{2}-\d{2}(?:$|T)/.test(String(value || "").trim());
+export const migrateAppData = (data: AppData): AppData => ({
+  ...data,
+  modules: {
+    ...data.modules,
+    incidents: data.modules.incidents.map((record) => {
+      if (looksLikeIsoDate(record.Date) || !looksLikeIsoDate(record["Utilisateur / Service"]) || looksLikeIsoDate(record.Description)) return record;
+      return {
+        ...record,
+        Date: record["Utilisateur / Service"],
+        "Utilisateur / Service": record.Description,
+        Description: record.Date,
+      };
+    }),
+  },
+});
 
 export const formatDate = (value: string, withYear = true) => {
   if (!value) return "—";
@@ -354,15 +369,49 @@ const cellValue = (cell: XLSX.CellObject | undefined) => {
   return String(cell.v);
 };
 
+const normalizeColumnLabel = (value: unknown) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const columnAliases: Record<string, string[]> = {
+  ID: ["identifiant", "incidentid", "numero"],
+  "Utilisateur / Service": ["utilisateur", "service", "demandeurservice"],
+  Description: ["incident", "libelle", "objet", "symptome"],
+  Catégorie: ["categorieincident", "type"],
+  Priorité: ["prioriteincident", "urgence"],
+  Statut: ["etat", "status"],
+  "Date début": ["debut", "datedebutprojet"],
+  "Date demande": ["demandedate"],
+  "Date acquisition": ["acquisitiondate"],
+  "Date approbation": ["approbationdate"],
+};
+const columnMatches = (source: unknown, target: string) => {
+  const normalized = normalizeColumnLabel(source);
+  return normalized === normalizeColumnLabel(target) || (columnAliases[target] || []).includes(normalized);
+};
+const findHeaderRow = (sheet: XLSX.WorkSheet, definition: ModuleDefinition, range: XLSX.Range) => {
+  let bestRow = Math.min(2, range.e.r);
+  let bestScore = 0;
+  for (let row = range.s.r; row <= Math.min(range.e.r, range.s.r + 8); row += 1) {
+    const values = Array.from({ length: range.e.c - range.s.c + 1 }, (_, offset) => cellValue(sheet[XLSX.utils.encode_cell({ r: row, c: range.s.c + offset })]));
+    const score = definition.headers.reduce((total, header) => total + (values.some((value) => columnMatches(value, header)) ? 1 : 0), 0);
+    if (score > bestScore) { bestRow = row; bestScore = score; }
+  }
+  return bestRow;
+};
+const getSourceHeaders = (sheet: XLSX.WorkSheet, range: XLSX.Range, headerRow: number) => Array.from({ length: range.e.c - range.s.c + 1 }, (_, offset) => cellValue(sheet[XLSX.utils.encode_cell({ r: headerRow, c: range.s.c + offset })]));
+
 const readRows = (sheet: XLSX.WorkSheet | undefined, definition: ModuleDefinition) => {
   if (!sheet || !sheet["!ref"]) return [];
   const range = XLSX.utils.decode_range(sheet["!ref"]);
+  const headerRow = findHeaderRow(sheet, definition, range);
+  const sourceHeaders = getSourceHeaders(sheet, range, headerRow);
+  const columnByHeader = new Map(definition.headers.map((header) => [header, sourceHeaders.findIndex((source) => columnMatches(source, header))]));
+  const hasRecognizedHeaders = Array.from(columnByHeader.values()).filter((index) => index >= 0).length >= 2;
   const rows: RecordItem[] = [];
-  for (let row = 3; row <= range.e.r; row += 1) {
+  for (let row = headerRow + 1; row <= range.e.r; row += 1) {
     const item: RecordItem = {};
     let hasValue = false;
     definition.headers.forEach((header, column) => {
-      const value = cellValue(sheet[XLSX.utils.encode_cell({ r: row, c: column })]);
+      const sourceColumn = hasRecognizedHeaders ? columnByHeader.get(header)! : (sourceHeaders.length === definition.headers.length - 1 && header === "ID" ? -1 : sourceHeaders.length === definition.headers.length - 1 ? column - 1 : column);
+      const value = sourceColumn < 0 ? "" : cellValue(sheet[XLSX.utils.encode_cell({ r: row, c: range.s.c + sourceColumn })]);
       item[header] = value;
       if (header !== "ID" && value) hasValue = true;
     });
@@ -422,7 +471,10 @@ export async function previewWorkbook(file: File): Promise<ImportPreview> {
 
 function mapImportRow(row: RecordItem, sourceHeaders: string[], definition: ModuleDefinition) {
   const mapped: RecordItem = {};
-  definition.headers.forEach((header, index) => { mapped[header] = row[header] ?? row[sourceHeaders[index]] ?? ""; });
+  definition.headers.forEach((header, index) => {
+    const sourceHeader = sourceHeaders.find((candidate) => columnMatches(candidate, header));
+    mapped[header] = row[header] ?? (sourceHeader ? row[sourceHeader] : row[sourceHeaders[index]]) ?? "";
+  });
   return mapped;
 }
 
