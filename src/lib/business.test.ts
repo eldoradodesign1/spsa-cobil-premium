@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { emptyData, getDateBounds, getMetrics, getNextEquipmentId, getWeeklyTrend, importPreviewToData, importWorkbook, matchesFilters, priorityTone } from "@/lib/business";
+import { emptyData, getDateBounds, getMetrics, getNextEquipmentId, getWeeklyTrend, importPreviewToData, importWorkbook, matchesFilters, migrateAppData, priorityTone } from "@/lib/business";
 import { createVault, unlockVault } from "@/lib/secureStorage";
+import { parseAppDataCsv, serializeAppData } from "@/lib/localRecovery";
 
 describe("logique métier SPSA COBIL", () => {
   it("applique simultanément le filtre de période, de responsable et de site", () => {
@@ -58,6 +59,44 @@ describe("logique métier SPSA COBIL", () => {
     expect(data.modules.suivi[0]["Activité / Demande"]).toBe("Connexion VPN");
     expect(data.report.startDate).toBe("2026-08-03");
     expect(data.report.realisations).toBe("Mise à jour du VPN");
+  });
+
+  it("ne décale pas les incidents quand la feuille source ne contient pas la colonne ID", async () => {
+    const workbook = XLSX.utils.book_new();
+    const incidents = XLSX.utils.aoa_to_sheet([
+      ["Incidents"],
+      [],
+      ["Date", "Utilisateur / Service", "Description", "Catégorie", "Priorité", "Statut"],
+      [new Date("2026-10-26T12:00:00"), "Charroi", "Land cruiser 4230 BV 01", "Application", "Haute", "Résolu"],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, incidents, "Incidents");
+    const file = new File([XLSX.write(workbook, { type: "array", bookType: "xlsx" })], "incidents-sans-id.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const data = await importWorkbook(file);
+    expect(data.modules.incidents[0]).toMatchObject({
+      Date: "2026-10-26",
+      "Utilisateur / Service": "Charroi",
+      Description: "Land cruiser 4230 BV 01",
+      Catégorie: "Application",
+      Priorité: "Haute",
+      Statut: "Résolu",
+    });
+    expect(data.modules.incidents[0].ID).toBe("");
+  });
+
+  it("répare les incidents déjà stockés avec les trois premières valeurs décalées", () => {
+    const data = emptyData();
+    data.modules.incidents = [{ Date: "Land cruiser 4230 BV 01", "Utilisateur / Service": "2026-10-26", Description: "Charroi", Catégorie: "Application", Priorité: "Haute", Statut: "Résolu" }];
+    expect(migrateAppData(data).modules.incidents[0]).toMatchObject({ Date: "2026-10-26", "Utilisateur / Service": "Charroi", Description: "Land cruiser 4230 BV 01" });
+  });
+
+  it("reconstitue les données métier depuis le CSV de récupération", () => {
+    const data = emptyData("session CSV");
+    data.modules.incidents = [{ Date: "2026-10-26", Description: "Serveur, baie 2", Statut: "Ouvert" }];
+    data.report.realisations = "Accès rétabli\navec preuve";
+    const restored = parseAppDataCsv(serializeAppData(data));
+    expect(restored?.sourceName).toBe("session CSV");
+    expect(restored?.modules.incidents[0]).toMatchObject({ Date: "2026-10-26", Description: "Serveur, baie 2", Statut: "Ouvert" });
+    expect(restored?.report.realisations).toBe("Accès rétabli\navec preuve");
   });
 
   it("importe uniquement les feuilles et lignes retenues dans la revue Excel", () => {

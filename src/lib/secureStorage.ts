@@ -1,5 +1,5 @@
 /** SPSA COBIL — Nebula : coffre local AES-GCM pour les données de pilotage. */
-import { AppData, emptyData } from "@/lib/business";
+import { AppData, emptyData, migrateAppData } from "@/lib/business";
 
 const VAULT_STORAGE_KEY = "spsa-cobil-vault-v1";
 const LEGACY_STORAGE_KEY = "spsa-cobil-data-v2";
@@ -41,7 +41,7 @@ export function getVaultBootstrap(): VaultBootstrap {
   if (vault) return { data: emptyData(), vault };
   try {
     const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    return { data: legacy ? JSON.parse(legacy) as AppData : emptyData(), vault: null };
+    return { data: legacy ? migrateAppData(JSON.parse(legacy) as AppData) : emptyData(), vault: null };
   } catch { return { data: emptyData(), vault: null }; }
 }
 
@@ -68,7 +68,7 @@ export async function unlockVault(vault: EncryptedVault, passphrase: string) {
   if (!crypto?.subtle) throw new Error("Web Crypto indisponible");
   const key = await deriveKey(passphrase, fromBase64(vault.salt), vault.iterations);
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(vault.iv) }, key, fromBase64(vault.ciphertext));
-  const data = JSON.parse(decoder.decode(plaintext)) as AppData;
+  const data = migrateAppData(JSON.parse(decoder.decode(plaintext)) as AppData);
   return { key, data };
 }
 
@@ -76,6 +76,7 @@ export async function updateVault(data: AppData, key: CryptoKey, current: Encryp
   return encrypt(data, key, current.salt);
 }
 
+export function persistLegacyData(data: AppData) { window.localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(data)); }
 export function persistVault(vault: EncryptedVault) { window.localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(vault)); }
 export function removeLegacyData() { window.localStorage.removeItem(LEGACY_STORAGE_KEY); }
 export function clearVault() { window.localStorage.removeItem(VAULT_STORAGE_KEY); window.localStorage.removeItem(LEGACY_STORAGE_KEY); }

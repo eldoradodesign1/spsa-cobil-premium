@@ -4,8 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, AlertTriangle, ArrowRight, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronRight, CircleDollarSign,
   CircleAlert, Download, FileDown, FileSpreadsheet, FileText, LayoutDashboard, ListFilter, Menu, MonitorCog,
-  Moon, MoreHorizontal, Orbit, PanelLeftClose, PanelLeftOpen, PenLine, Plus, ReceiptText, RotateCcw, Search, Settings2,
-  KeyRound, LockKeyhole, ShieldCheck, Siren, Sparkles, Sun, Table2, Trash2, Unlock, Upload, X,
+  Moon, MoreHorizontal, Orbit, PanelLeftClose, PanelLeftOpen, PenLine, Plus, ReceiptText, RefreshCw, RotateCcw, Search, Settings2,
+  KeyRound, LockKeyhole, ShieldAlert, ShieldCheck, Siren, Sparkles, Sun, Table2, Trash2, Unlock, Upload, X,
 } from "lucide-react";
 import { AppLogo } from "@/components/AppLogo";
 import { DoubleRangeSlider } from "@/components/DoubleRangeSlider";
@@ -18,7 +18,8 @@ import {
   getWeeklyTrend, getNextEquipmentId, importPreviewToData, matchesFilters, previewWorkbook, priorityTone, statusTone,
 } from "@/lib/business";
 import { exportPdf, exportXlsx, reportDateLabel } from "@/lib/exports";
-import { EncryptedVault, clearVault, createVault, getVaultBootstrap, persistVault, removeLegacyData, unlockVault, updateVault } from "@/lib/secureStorage";
+import { EncryptedVault, clearVault, createVault, getVaultBootstrap, persistLegacyData, persistVault, removeLegacyData, unlockVault, updateVault } from "@/lib/secureStorage";
+import { clearRefreshRecovery, consumeRefreshRecovery, downloadCsv, persistAutoSaveCsv, persistRefreshRecovery, serializeAppData } from "@/lib/localRecovery";
 
 type View = "dashboard" | "report" | "settings" | ModuleKey;
 type ToastState = { message: string; kind: "success" | "info" | "error" } | null;
@@ -54,12 +55,19 @@ const purchaseEquipmentKeys = ["Ajouter à l’inventaire", ...purchaseEquipment
 
 export default function Home() {
   const [bootstrap] = useState(() => getVaultBootstrap());
+  const [initialSession] = useState(() => {
+    const recovered = consumeRefreshRecovery();
+    return { data: !bootstrap.vault && recovered ? recovered : bootstrap.data, recovered: Boolean(!bootstrap.vault && recovered) };
+  });
   const [view, setView] = useState<View>(() => new URLSearchParams(window.location.search).get("view") === "report" ? "report" : "dashboard");
-  const [data, setData] = useState<AppData>(bootstrap.data);
+  const [data, setData] = useState<AppData>(initialSession.data);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [theme, setTheme] = useState<"light" | "dark">(() => (window.localStorage.getItem("spsa-cobil-theme") as "light" | "dark") || "dark");
   const [fontSet, setFontSet] = useState<FontSet>(() => (window.localStorage.getItem("spsa-cobil-font-set") as FontSet) || "manrope");
   const [displayStyle, setDisplayStyle] = useState<DisplayStyle>(() => (window.localStorage.getItem("spsa-cobil-display-style") as DisplayStyle) || "design");
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(() => window.localStorage.getItem("spsa-cobil-auto-save") !== "false");
+  const [refreshDialog, setRefreshDialog] = useState(false);
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -96,6 +104,8 @@ export default function Home() {
   const vaultKeyRef = useRef<CryptoKey | null>(null);
   const vaultRef = useRef<EncryptedVault | null>(bootstrap.vault);
   const dragDepthRef = useRef(0);
+  const dataRef = useRef(data);
+  const allowRefreshRef = useRef(false);
   const bounds = useMemo(() => getDateBounds(data), [data]);
   const metrics = useMemo(() => getMetrics(data, filters), [data, filters]);
   const trend = useMemo(() => getWeeklyTrend(data, filters), [data, filters]);
@@ -113,6 +123,9 @@ export default function Home() {
   useEffect(() => { document.documentElement.dataset.theme = theme; window.localStorage.setItem("spsa-cobil-theme", theme); }, [theme]);
   useEffect(() => { document.documentElement.dataset.font = fontSet; window.localStorage.setItem("spsa-cobil-font-set", fontSet); }, [fontSet]);
   useEffect(() => { document.documentElement.dataset.style = displayStyle; window.localStorage.setItem("spsa-cobil-display-style", displayStyle); }, [displayStyle]);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => { window.localStorage.setItem("spsa-cobil-auto-save", String(autoSaveEnabled)); }, [autoSaveEnabled]);
+  useEffect(() => { if (vaultStatus === "unprotected") { try { persistLegacyData(data); } catch { setToast({ message: "La sauvegarde locale n’a pas pu être actualisée.", kind: "error" }); } } }, [data, vaultStatus]);
   useEffect(() => { vaultRef.current = vault; }, [vault]);
   useEffect(() => {
     const key = vaultKeyRef.current; const current = vaultRef.current;
@@ -132,9 +145,36 @@ export default function Home() {
     return () => observer.disconnect();
   }, [view]);
   useEffect(() => { if (!toast) return; const timeout = window.setTimeout(() => setToast(null), 3200); return () => window.clearTimeout(timeout); }, [toast]);
+  useEffect(() => { if (initialSession.recovered) setToast({ message: "Session restaurée depuis le CSV de sécurité.", kind: "info" }); }, [initialSession.recovered]);
   useEffect(() => { const onBeforeInstallPrompt = (event: Event) => { event.preventDefault(); setInstallPrompt(event as BeforeInstallPromptEvent); }; window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt); return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt); }, []);
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+    const interval = window.setInterval(() => {
+      const csv = serializeAppData(dataRef.current);
+      persistAutoSaveCsv(csv);
+      downloadCsv(csv, `SPSA-COBIL_AutoSave_${new Date().toISOString().slice(0, 10)}.csv`);
+      setLastAutoSavedAt(new Date().toISOString());
+      setToast({ message: "Enregistrement automatique CSV effectué.", kind: "info" });
+    }, 10 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [autoSaveEnabled]);
+  useEffect(() => {
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", preventContextMenu);
+    return () => document.removeEventListener("contextmenu", preventContextMenu);
+  }, []);
 
   const notify = (message: string, kind: "success" | "info" | "error" = "success") => setToast({ message, kind });
+  const hasSessionData = data.updatedAt !== null || MODULES.some((module) => data.modules[module.key].length > 0) || Object.values(data.report).some(Boolean);
+  const requestRefresh = () => { if (hasSessionData) setRefreshDialog(true); else { allowRefreshRef.current = true; window.location.reload(); } };
+  const exportAndRefresh = () => {
+    const csv = serializeAppData(dataRef.current);
+    persistRefreshRecovery(dataRef.current);
+    downloadCsv(csv, `SPSA-COBIL_Refresh_${new Date().toISOString().slice(0, 10)}.csv`);
+    allowRefreshRef.current = true;
+    setRefreshDialog(false);
+    window.setTimeout(() => window.location.reload(), 260);
+  };
   const navigate = (next: View) => { setView(next); if (next !== "dashboard" && next !== "report") setExportKind(null); setSidebarOpen(false); setShowSearch(false); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const resetFilters = () => { setFilters({ ...defaultFilters, from: bounds.min, to: bounds.max }); notify("Périmètre réinitialisé", "info"); };
   const markNotificationAsRead = (id: string) => {
@@ -227,14 +267,14 @@ export default function Home() {
   const requestInstall = async () => { if (!installPrompt) { notify("Utilisez le menu du navigateur pour installer l’application lorsque l’option est disponible.", "info"); return; } await installPrompt.prompt(); const result = await installPrompt.userChoice; setInstallPrompt(null); notify(result.outcome === "accepted" ? "Installation demandée au navigateur" : "Installation annulée", result.outcome === "accepted" ? "success" : "info"); };
   const setupVault = async (passphrase: string) => {
     setVaultBusy(true); setVaultError("");
-    try { const created = await createVault(data, passphrase); vaultKeyRef.current = created.key; vaultRef.current = created.vault; setVault(created.vault); persistVault(created.vault); removeLegacyData(); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local chiffré activé"); }
+    try { const created = await createVault(data, passphrase); clearRefreshRecovery(); vaultKeyRef.current = created.key; vaultRef.current = created.vault; setVault(created.vault); persistVault(created.vault); removeLegacyData(); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local chiffré activé"); }
     catch { setVaultError("Le chiffrement n’a pas pu être activé dans ce navigateur."); }
     finally { setVaultBusy(false); }
   };
   const unlockLocalVault = async (passphrase: string) => {
     if (!vault) return;
     setVaultBusy(true); setVaultError("");
-    try { const opened = await unlockVault(vault, passphrase); vaultKeyRef.current = opened.key; setData(opened.data); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local déverrouillé"); }
+    try { const opened = await unlockVault(vault, passphrase); clearRefreshRecovery(); vaultKeyRef.current = opened.key; setData(opened.data); setVaultStatus("secured"); setVaultDialog(null); notify("Coffre local déverrouillé"); }
     catch { setVaultError("Phrase secrète incorrecte ou coffre local illisible."); }
     finally { setVaultBusy(false); }
   };
@@ -250,6 +290,8 @@ export default function Home() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isEditing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      const isRefreshShortcut = event.key === "F5" || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r");
+      if (isRefreshShortcut) { event.preventDefault(); event.stopPropagation(); requestRefresh(); return; }
       if (event.key === "Escape") {
         if (showNotifications) { event.preventDefault(); setShowNotifications(false); return; }
         if (showSearch) { event.preventDefault(); setShowSearch(false); return; }
@@ -272,9 +314,19 @@ export default function Home() {
       const next = shortcutViews[event.key];
       if (next) { event.preventDefault(); navigate(next); }
     };
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [exportKind, recordDialog, showNotifications, showSearch, sidebarOpen, theme, view, data, filters, workbookPreview]);
+  }, [exportKind, recordDialog, showNotifications, showSearch, sidebarOpen, theme, view, data, filters, workbookPreview, hasSessionData]);
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasSessionData || allowRefreshRef.current) return;
+      persistRefreshRecovery(dataRef.current);
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasSessionData]);
 
   return <div className={`app-shell ${collapsed ? "app-shell--collapsed" : ""} ${sidebarOpen ? "app-shell--menu-open" : ""}`} onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}>
     <div className="lavalamp" aria-hidden="true"><span className="lava-blob lava-blob--one" /><span className="lava-blob lava-blob--two" /><span className="lava-blob lava-blob--three" /><span className="lava-blob lava-blob--four" /></div><div className="style-doodles" aria-hidden="true"><span>✦</span><span>〰</span><span>· · ·</span></div>
@@ -362,7 +414,7 @@ export default function Home() {
       <div className="page-content">
         <AnimatePresence mode="wait">{view === "dashboard" ? <Dashboard key="dashboard" filterDockRef={filterDockRef} data={data} metrics={metrics} trend={trend} filters={filters} bounds={bounds} activeFilterCount={activeFilterCount} theme={theme} onFilterChange={setFilters} onReset={resetFilters} onImport={() => inputRef.current?.click()} onNavigate={navigate} onExport={() => startExport("dashboard")} />
           : view === "report" ? <WeeklyReport key="report" data={data} metrics={metrics} editing={reportEditing} onEdit={() => setReportEditing(true)} onCancel={() => setReportEditing(false)} onSave={saveReport} onExport={() => startExport("report")} />
-          : view === "settings" ? <SettingsPage key="settings" theme={theme} data={data} canInstall={Boolean(installPrompt)} vaultStatus={vaultStatus} onInstall={() => { void requestInstall(); }} onSetupVault={() => { setVaultError(""); setVaultDialog("setup"); }} onLockVault={lockLocalVault} onUnlockVault={() => { setVaultError(""); setVaultDialog("unlock"); }} onTheme={switchTheme} fontSet={fontSet} displayStyle={displayStyle} onFontSet={setFontSet} onDisplayStyle={setDisplayStyle} onClear={clearLocalWorkspace} />
+          : view === "settings" ? <SettingsPage key="settings" theme={theme} data={data} canInstall={Boolean(installPrompt)} vaultStatus={vaultStatus} autoSaveEnabled={autoSaveEnabled} lastAutoSavedAt={lastAutoSavedAt} onAutoSave={setAutoSaveEnabled} onInstall={() => { void requestInstall(); }} onSetupVault={() => { setVaultError(""); setVaultDialog("setup"); }} onLockVault={lockLocalVault} onUnlockVault={() => { setVaultError(""); setVaultDialog("unlock"); }} onTheme={switchTheme} fontSet={fontSet} displayStyle={displayStyle} onFontSet={setFontSet} onDisplayStyle={setDisplayStyle} onClear={clearLocalWorkspace} />
           : <ModulePage key={view} module={MODULE_BY_KEY[view]} records={data.modules[view].map((record, index) => ({ record, index })).filter(({ record }) => matchesFilters(record, filters))} onCreate={() => setRecordDialog({ module: view, index: null, values: view === "equipements" ? { "Asset ID": getNextEquipmentId(data) } : {} })} onEdit={(index, record) => setRecordDialog({ module: view, index, values: { ...record } })} onDelete={(index) => deleteRecord(view, index)} />}</AnimatePresence>
       </div>
     </main>
@@ -376,6 +428,7 @@ export default function Home() {
     <AnimatePresence>{workbookPreview && <ImportReviewDialog preview={workbookPreview} onClose={() => setWorkbookPreview(null)} onChooseFile={() => inputRef.current?.click()} onUpdateSheet={updateImportSheet} onConfirm={confirmImport} />}</AnimatePresence>
     <AnimatePresence>{recordDialog && <RecordEditor dialog={recordDialog} suggestedEquipmentId={getNextEquipmentId(data)} onClose={() => setRecordDialog(null)} onChange={(values) => setRecordDialog((current) => current ? { ...current, values } : current)} onSubmit={saveRecord} />}</AnimatePresence>
     <AnimatePresence>{vaultDialog && <VaultDialog mode={vaultDialog} busy={vaultBusy} error={vaultError} onSetup={setupVault} onUnlock={unlockLocalVault} onClose={() => { if (vaultDialog === "setup") setVaultDialog(null); }} />}</AnimatePresence>
+    <AnimatePresence>{refreshDialog && <RefreshGuardDialog onClose={() => setRefreshDialog(false)} onConfirm={exportAndRefresh} />}</AnimatePresence>
   </div>;
 }
 
@@ -445,15 +498,19 @@ function ModulePage({ module, records, onCreate, onEdit, onDelete }: { module: t
   return <motion.div className="view-stack module-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="module-hero"><div className="module-hero__icon"><IconComponent size={24} /></div><div><p className="eyebrow">{module.eyebrow}</p><h1>{module.label}</h1><p>{module.description}</p></div><button className="primary-button" onClick={onCreate}><Plus size={17} />Nouvelle entrée</button></section><section className="table-shell glass-panel"><div className="table-toolbar"><div className="table-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher dans ce registre" /></div><NebulaSelect value={status === "all" ? "" : status} onChange={(value) => setStatus(value || "all")} options={statuses} emptyLabel="Tous les statuts" className="table-status-select" /><span>{filtered.length} résultat{filtered.length > 1 ? "s" : ""}</span></div>{filtered.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr>{visibleHeaders.map((header) => <th key={header}>{header}</th>)}<th aria-label="Actions" /></tr></thead><tbody>{filtered.map(({ record, index }) => <tr key={`${module.key}-${index}`}>{visibleHeaders.map((header) => <td key={header} className={header === module.primaryField ? "table-primary" : undefined}>{header === module.primaryField ? record[header] || "Sans libellé" : header === "Statut" || header === "État" ? <span className={`status-pill status-pill--${statusTone(record[header])}`}>{record[header] || "—"}</span> : header === "Priorité" ? <span className={`priority-pill priority-pill--${priorityTone(record[header])}`}>{record[header] || "Normale"}</span> : record[header] || "—"}</td>)}<td><div className="row-actions"><button onClick={() => onEdit(index, record)} aria-label="Modifier"><PenLine size={15} /></button><button onClick={() => onDelete(index)} aria-label="Supprimer"><Trash2 size={15} /></button></div></td></tr>)}</tbody></table></div> : <EmptyState title="Aucune entrée dans ce périmètre" text="Créez une première entrée ou ajustez votre recherche et vos filtres globaux." action="Nouvelle entrée" onAction={onCreate} />}</section></motion.div>;
 }
 
-function SettingsPage({ theme, fontSet, displayStyle, data, canInstall, vaultStatus, onInstall, onSetupVault, onLockVault, onUnlockVault, onTheme, onFontSet, onDisplayStyle, onClear }: { theme: "light" | "dark"; fontSet: FontSet; displayStyle: DisplayStyle; data: AppData; canInstall: boolean; vaultStatus: VaultStatus; onInstall: () => void; onSetupVault: () => void; onLockVault: () => void; onUnlockVault: () => void; onTheme: (theme: "light" | "dark") => void; onFontSet: (fontSet: FontSet) => void; onDisplayStyle: (displayStyle: DisplayStyle) => void; onClear: () => void }) {
+function SettingsPage({ theme, fontSet, displayStyle, data, canInstall, vaultStatus, autoSaveEnabled, lastAutoSavedAt, onAutoSave, onInstall, onSetupVault, onLockVault, onUnlockVault, onTheme, onFontSet, onDisplayStyle, onClear }: { theme: "light" | "dark"; fontSet: FontSet; displayStyle: DisplayStyle; data: AppData; canInstall: boolean; vaultStatus: VaultStatus; autoSaveEnabled: boolean; lastAutoSavedAt: string | null; onAutoSave: (enabled: boolean) => void; onInstall: () => void; onSetupVault: () => void; onLockVault: () => void; onUnlockVault: () => void; onTheme: (theme: "light" | "dark") => void; onFontSet: (fontSet: FontSet) => void; onDisplayStyle: (displayStyle: DisplayStyle) => void; onClear: () => void }) {
   const vaultCopy = vaultStatus === "secured" ? { title: "Coffre local actif.", text: "Les données saisies sont chiffrées localement avec votre phrase secrète. Elle ne quitte jamais cet appareil.", action: "Verrouiller maintenant" } : vaultStatus === "locked" ? { title: "Coffre local verrouillé.", text: "Les données chiffrées sont présentes sur cet appareil mais restent indisponibles sans votre phrase secrète.", action: "Déverrouiller le coffre" } : { title: "Protéger les données locales.", text: "Activez un chiffrement AES-GCM local pour ne plus conserver les données de pilotage en clair dans ce navigateur.", action: "Activer le coffre chiffré" };
-  return <motion.div className="view-stack settings-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="settings-hero"><p className="eyebrow"><Settings2 size={14} /> Environnement</p><h1>Préférences du <em>cockpit.</em></h1><p>Les réglages d’apparence et le dernier espace de travail sont stockés dans ce navigateur.</p></section><div className="settings-grid"><article className="glass-panel setting-card"><div><p className="eyebrow">Apparence</p><h2>Thème de lecture</h2><p>Deux interprétations conçues pour préserver les contrastes et le confort de travail.</p></div><div className="theme-choice"><button className={theme === "dark" ? "is-selected" : ""} onClick={() => onTheme("dark")}><Moon size={17} /><span><b>Nocturne</b><small>Encre boréale</small></span><i /></button><button className={theme === "light" ? "is-selected" : ""} onClick={() => onTheme("light")}><Sun size={17} /><span><b>Opalin</b><small>Blanc minéral</small></span><i /></button></div></article><article className="glass-panel setting-card setting-card--preference"><div><p className="eyebrow">Typographie</p><h2>Jeu de polices</h2><p>Choisissez le caractère de lecture du cockpit. Le réglage est mémorisé dans ce navigateur.</p></div><div className="preference-choice">{(Object.keys(fontSetLabels) as FontSet[]).map((option) => <button key={option} className={fontSet === option ? "is-selected" : ""} onClick={() => onFontSet(option)}><span><b>{fontSetLabels[option].label}</b><small>{fontSetLabels[option].description}</small></span><i /></button>)}</div></article><article className="glass-panel setting-card setting-card--preference"><div><p className="eyebrow">Composition</p><h2>Style d’affichage</h2><p>Adaptez le ton visuel du cockpit sans modifier vos données opérationnelles.</p></div><div className="preference-choice">{(Object.keys(displayStyleLabels) as DisplayStyle[]).map((option) => <button key={option} className={displayStyle === option ? "is-selected" : ""} onClick={() => onDisplayStyle(option)}><span><b>{displayStyleLabels[option].label}</b><small>{displayStyleLabels[option].description}</small></span><i /></button>)}</div></article><article className="glass-panel setting-card setting-card--vault"><div><p className="eyebrow"><LockKeyhole size={13} /> Sécurité locale</p><h2>{vaultCopy.title}</h2><p>{vaultCopy.text}</p><button className="primary-button pwa-install-button" onClick={vaultStatus === "secured" ? onLockVault : vaultStatus === "locked" ? onUnlockVault : onSetupVault}>{vaultStatus === "secured" ? <LockKeyhole size={16} /> : vaultStatus === "locked" ? <Unlock size={16} /> : <KeyRound size={16} />}{vaultCopy.action}</button></div><ShieldCheck size={34} /></article><article className="glass-panel setting-card"><div><p className="eyebrow">Espace local</p><h2>{data.sourceName}</h2><p>{data.updatedAt ? `Dernière mise à jour · ${formatDate(data.updatedAt)}` : "Aucune donnée importée ou saisie."}</p></div><button className="danger-button" onClick={onClear}><Trash2 size={16} />Réinitialiser les données locales</button></article><article className="glass-panel setting-card setting-card--pwa"><div><p className="eyebrow">Application installable</p><h2>Prête pour un usage récurrent.</h2><p>{canInstall ? "Le navigateur est prêt : installez le cockpit pour le retrouver comme une application autonome." : "Depuis le navigateur, utilisez l’action d’installation lorsqu’elle est proposée. Les données restent attachées à cet appareil."}</p><button className="primary-button pwa-install-button" onClick={onInstall}><Download size={16} />{canInstall ? "Installer l’application" : "Voir les options d’installation"}</button></div><ShieldCheck size={34} /></article></div></motion.div>;
+  return <motion.div className="view-stack settings-view" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><section className="settings-hero"><p className="eyebrow"><Settings2 size={14} /> Environnement</p><h1>Préférences du <em>cockpit.</em></h1><p>Les réglages d’apparence, de sécurité et de continuité sont stockés dans ce navigateur.</p></section><div className="settings-grid"><article className="glass-panel setting-card"><div><p className="eyebrow">Apparence</p><h2>Thème de lecture</h2><p>Deux interprétations conçues pour préserver les contrastes et le confort de travail.</p></div><div className="theme-choice"><button className={theme === "dark" ? "is-selected" : ""} onClick={() => onTheme("dark")}><Moon size={17} /><span><b>Nocturne</b><small>Encre boréale</small></span><i /></button><button className={theme === "light" ? "is-selected" : ""} onClick={() => onTheme("light")}><Sun size={17} /><span><b>Opalin</b><small>Blanc minéral</small></span><i /></button></div></article><article className="glass-panel setting-card setting-card--preference"><div><p className="eyebrow">Typographie</p><h2>Jeu de polices</h2><p>Choisissez le caractère de lecture du cockpit. Le réglage est mémorisé dans ce navigateur.</p></div><div className="preference-choice">{(Object.keys(fontSetLabels) as FontSet[]).map((option) => <button key={option} className={fontSet === option ? "is-selected" : ""} onClick={() => onFontSet(option)}><span><b>{fontSetLabels[option].label}</b><small>{fontSetLabels[option].description}</small></span><i /></button>)}</div></article><article className="glass-panel setting-card setting-card--preference"><div><p className="eyebrow">Composition</p><h2>Style d’affichage</h2><p>Adaptez le ton visuel du cockpit sans modifier vos données opérationnelles.</p></div><div className="preference-choice">{(Object.keys(displayStyleLabels) as DisplayStyle[]).map((option) => <button key={option} className={displayStyle === option ? "is-selected" : ""} onClick={() => onDisplayStyle(option)}><span><b>{displayStyleLabels[option].label}</b><small>{displayStyleLabels[option].description}</small></span><i /></button>)}</div></article><article className={`glass-panel setting-card setting-card--autosave ${autoSaveEnabled ? "is-active" : ""}`}><div><p className="eyebrow"><RefreshCw size={13} /> Continuité de session</p><h2>Enregistrement auto</h2><p>Une copie CSV légère est préparée toutes les 10 minutes et conservée localement pour sécuriser votre session.</p>{lastAutoSavedAt && <small className="setting-card__meta">Dernière copie · {formatDate(lastAutoSavedAt)}</small>}</div><button className="settings-switch" type="button" role="switch" aria-checked={autoSaveEnabled} onClick={() => onAutoSave(!autoSaveEnabled)}><i /></button></article><article className="glass-panel setting-card setting-card--vault"><div><p className="eyebrow"><LockKeyhole size={13} /> Sécurité locale</p><h2>{vaultCopy.title}</h2><p>{vaultCopy.text}</p><button className="primary-button pwa-install-button" onClick={vaultStatus === "secured" ? onLockVault : vaultStatus === "locked" ? onUnlockVault : onSetupVault}>{vaultStatus === "secured" ? <LockKeyhole size={16} /> : vaultStatus === "locked" ? <Unlock size={16} /> : <KeyRound size={16} />}{vaultCopy.action}</button></div><ShieldCheck size={34} /></article><article className="glass-panel setting-card"><div><p className="eyebrow">Espace local</p><h2>{data.sourceName}</h2><p>{data.updatedAt ? `Dernière mise à jour · ${formatDate(data.updatedAt)}` : "Aucune donnée importée ou saisie."}</p></div><button className="danger-button" onClick={onClear}><Trash2 size={16} />Réinitialiser les données locales</button></article><article className="glass-panel setting-card setting-card--pwa"><div><p className="eyebrow">Application installable</p><h2>Prête pour un usage récurrent.</h2><p>{canInstall ? "Le navigateur est prêt : installez le cockpit pour le retrouver comme une application autonome." : "Depuis le navigateur, utilisez l’action d’installation lorsqu’elle est proposée. Les données restent attachées à cet appareil."}</p><button className="primary-button pwa-install-button" onClick={onInstall}><Download size={16} />{canInstall ? "Installer l’application" : "Voir les options d’installation"}</button></div><ShieldCheck size={34} /></article></div></motion.div>;
 }
 
 function VaultDialog({ mode, busy, error, onSetup, onUnlock, onClose }: { mode: "setup" | "unlock"; busy: boolean; error: string; onSetup: (passphrase: string) => void; onUnlock: (passphrase: string) => void; onClose: () => void }) {
   const [passphrase, setPassphrase] = useState(""); const [confirmation, setConfirmation] = useState(""); const isSetup = mode === "setup"; const valid = isSetup ? passphrase.length >= 12 && passphrase === confirmation : passphrase.length > 0;
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!valid || busy) return; if (isSetup) onSetup(passphrase); else onUnlock(passphrase); };
   return <motion.div className="modal-backdrop vault-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><motion.form className="vault-dialog" initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} onSubmit={submit}><div className="vault-dialog__seal"><LockKeyhole size={24} /></div><p className="eyebrow">Coffre local Nebula</p><h2>{isSetup ? "Protéger cet espace de travail." : "Déverrouiller cet espace."}</h2><p>{isSetup ? "Choisissez une phrase secrète d’au moins 12 caractères. Elle chiffre les données de ce navigateur et ne peut pas être récupérée par SPSA COBIL." : "Saisissez la phrase secrète qui chiffre les données stockées sur cet appareil."}</p><label className="vault-field"><span>Phrase secrète</span><input autoFocus type="password" autoComplete={isSetup ? "new-password" : "current-password"} value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="Au moins 12 caractères" /></label>{isSetup && <label className="vault-field"><span>Confirmer la phrase secrète</span><input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Ressaisissez la phrase secrète" /></label>}{isSetup && passphrase && passphrase.length < 12 && <small className="vault-hint">Utilisez au moins 12 caractères.</small>}{isSetup && confirmation && confirmation !== passphrase && <small className="vault-error">Les phrases secrètes ne correspondent pas.</small>}{error && <small className="vault-error">{error}</small>}<div className="vault-dialog__actions">{isSetup && <button type="button" className="soft-button" onClick={onClose}>Annuler</button>}<button type="submit" className="primary-button vault-dialog__submit" disabled={!valid || busy}>{busy ? "Sécurisation…" : isSetup ? "Activer le chiffrement" : "Déverrouiller"}<ArrowRight size={16} /></button></div><small className="vault-footer">AES-256-GCM · PBKDF2-SHA-256 · Clé non stockée</small></motion.form></motion.div>;
+}
+
+function RefreshGuardDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => void }) {
+  return <motion.div className="modal-backdrop vault-backdrop refresh-guard-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><motion.section className="vault-dialog refresh-guard-dialog" initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }}><div className="vault-dialog__seal refresh-guard-dialog__seal"><ShieldAlert size={24} /></div><p className="eyebrow">Protection de session</p><h2>Exporter avant d’actualiser ?</h2><p>Les données restent sur cet appareil. Une copie CSV de sécurité sera téléchargée, puis l’application se rechargera et restaurera automatiquement cette session.</p><div className="vault-dialog__actions"><button type="button" className="soft-button" onClick={onClose}>Continuer la session</button><button type="button" className="primary-button vault-dialog__submit" onClick={onConfirm}><Download size={16} />Exporter et actualiser</button></div><small className="vault-footer">CSV local · restauration automatique après refresh</small></motion.section></motion.div>;
 }
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) { return <label className="filter-select"><span>{label}</span><NebulaSelect value={value} onChange={onChange} options={options} emptyLabel="Tous" /></label>; }
