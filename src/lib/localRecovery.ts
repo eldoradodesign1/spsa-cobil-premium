@@ -1,6 +1,7 @@
 import { AppData, ModuleKey, emptyData } from "@/lib/business";
 
 const REFRESH_RECOVERY_KEY = "spsa-cobil-refresh-recovery-v1";
+const AUTOSAVE_KEY = "spsa-cobil-autosave-csv-v2";
 const LEGACY_AUTOSAVE_KEY = "spsa-cobil-autosave-csv-v1";
 
 type CsvRow = [string, string, string, string, string];
@@ -115,5 +116,8 @@ export function clearRefreshRecovery() {
 }
 
 export function persistAutoSaveCsv(csv: string) {
-  try { localStorage.setItem(LEGACY_AUTOSAVE_KEY, csv); } catch {}
+  try {
+    localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
+    sessionStorage.setItem(AUTOSAVE_KEY, csv);
+  } catch {}
 }
